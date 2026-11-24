@@ -124,7 +124,23 @@ def cmd_app(args) -> int:
             print("Nenhum usuário criado ainda. Rode antes: python -m robo criar-usuario SEU_NOME")
             return 1
     app = criar_app(carregar_config(), chromium=args.chromium)
-    host = "0.0.0.0" if args.rede else "127.0.0.1"
+    host = "0.0.0.0" if (args.rede or args.tailscale) else "127.0.0.1"
+    if args.tailscale:
+        # Aceita só este Mac e os seus aparelhos na rede privada do Tailscale (100.64.0.0/10).
+        import ipaddress
+
+        from flask import abort, request
+
+        permitidas = [ipaddress.ip_network(n) for n in ("127.0.0.0/8", "::1/128", "100.64.0.0/10", "fd7a:115c:a1e0::/48")]
+
+        @app.before_request
+        def _so_tailscale():
+            try:
+                ip = ipaddress.ip_address((request.remote_addr or "").split("%")[0])
+            except ValueError:
+                abort(403)
+            if not any(ip in n for n in permitidas):
+                abort(403)
     print(f"Abra no navegador: http://localhost:{args.porta}   (Ctrl+C para fechar)")
     from werkzeug.serving import run_simple
 
@@ -179,6 +195,8 @@ def main(argv=None) -> int:
     a = sub.add_parser("app", help="abre o programinha no navegador (login, busca por rota e mês)")
     a.add_argument("--porta", type=int, default=8000)
     a.add_argument("--rede", action="store_true", help="permite acessar de outros aparelhos da mesma rede Wi-Fi")
+    a.add_argument("--tailscale", action="store_true",
+                   help="permite acessar só dos seus aparelhos no Tailscale (além deste computador)")
     a.add_argument("--chromium", help=argparse.SUPPRESS)
     a.set_defaults(f=cmd_app)
 

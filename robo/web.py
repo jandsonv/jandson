@@ -23,7 +23,8 @@ from .radar import Oferta, Radar, link_google_flights
 MAX_MESES = 12
 MSG_ASSISTIDO = ("Radar pronto. Para o preço real, clique em \"Site da…\" e nos programas de milhas: "
                  "a página abre no seu Chrome e a extensão lê o valor para esta tabela.")
-SITES = {"smiles.com.br": "smiles", "latamairlines.com": "latam", "voeazul.com.br": "azul", "voegol.com.br": "gol"}
+SITES = {"smiles.com.br": "smiles", "latamairlines.com": "latam", "voeazul.com.br": "azul", "voegol.com.br": "gol",
+         "google.com": "google"}
 
 
 def chave_site(url: str) -> str | None:
@@ -54,7 +55,7 @@ def conectar(caminho) -> sqlite3.Connection:
     # Atualiza bancos criados por versões anteriores.
     for tabela, coluna, tipo in (("buscas", "ida_volta", "INTEGER DEFAULT 0"), ("resultados", "trecho", "TEXT"),
                                  ("resultados", "de", "TEXT"), ("resultados", "para", "TEXT"),
-                                 ("resultados", "preco_radar", "REAL"), ("usuarios", "chave", "TEXT"), ("buscas", "varredura", "INTEGER DEFAULT 0"), ("resultados", "conferido", "TEXT")):
+                                 ("resultados", "preco_radar", "REAL"), ("usuarios", "chave", "TEXT"), ("resultados", "calendario", "TEXT"), ("buscas", "varredura", "INTEGER DEFAULT 0"), ("resultados", "conferido", "TEXT")):
         if coluna not in {c[1] for c in db.execute(f"PRAGMA table_info({tabela})")}:
             db.execute(f"ALTER TABLE {tabela} ADD COLUMN {coluna} {tipo}")
     return db
@@ -510,6 +511,8 @@ def criar_app(cfg: dict, caminho_db=None, chromium: str | None = None, fabrica_r
             abort(404)
         if alvo == "cia":
             destino = r["link_cia"]
+        elif alvo == "google":
+            destino = r["link_google"]
         else:
             destino = next((m["link"] for m in json.loads(r["milhas"] or "[]") if m["programa"] == alvo), None)
         if not destino:
@@ -539,9 +542,62 @@ def criar_app(cfg: dict, caminho_db=None, chromium: str | None = None, fabrica_r
             return jsonify(lido=False, mensagem="Busca não encontrada.")
         texto, jsons = str(dados.get("texto", "")), [j.get("dados") for j in (dados.get("json") or [])
                                                       if isinstance(j, dict)]
+        if alvo["alvo"] == "google":
+            resultado = _ler_google(r, dados.get("calendario"))
+            if not resultado["lido"] and dados.get("calendario") is not None:
+                _guardar_diagnostico("google", dados)
+            return jsonify(**resultado)
         if alvo["alvo"] == "cia":
             return jsonify(**_ler_cia(r, texto))
         return jsonify(**_ler_milhas(r, alvo["alvo"], texto, jsons))
+
+    def _guardar_diagnostico(nome: str, dados: dict) -> None:
+        """Guarda as últimas leituras que falharam, para calibrar a leitura daquele site."""
+        try:
+            pasta = Path(caminho_db).parent / "diagnostico"
+            pasta.mkdir(parents=True, exist_ok=True)
+            (pasta / f"{nome}-{int(time.time())}.json").write_text(json.dumps(dados, ensure_ascii=False)[:2_000_000],
+                                                                    encoding="utf-8")
+            for velho in sorted(pasta.glob(f"{nome}-*.json"))[:-5]:
+                velho.unlink()
+        except OSError:
+            pass
+
+    def _ler_google(r, calendario) -> dict:
+        """Calendário do Google Voos: menor preço de cada dia, de todas as companhias."""
+        piso = 0.5 * float(r["preco_radar"] or r["preco"])
+        dias = {}
+        for item in calendario or []:
+            try:
+                d, v = date.fromisoformat(str(item["iso"])), float(item["preco"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if d.strftime("%Y-%m") == r["mes"] and d >= date.today() and v >= piso:
+                dias[d] = min(v, dias.get(d, v))
+        if not dias:
+            return dict(lido=False, mensagem="Não encontrei os preços do calendário nesta página.")
+        melhor = min(dias, key=dias.get)
+        mudou_dia = melhor.isoformat() != r["ida"]
+        nota = "calendário do Google Voos (todas as companhias)"
+        if mudou_dia:
+            nota += f"; o radar indicava {date.fromisoformat(r['ida']):%d/%m} por R$ {r['preco']:,.0f}".replace(",", ".")
+        milhas = json.loads(r["milhas"] or "[]")
+        if mudou_dia and milhas:
+            novos = mod_milhas.links_para(cfg.get("milhas", {}), r["de"] or r["origem"], r["para"], melhor, None)
+            milhas = [dict(programa=x.programa, nome=x.nome, status="abrir", milhas=None, link=x.link, reais=None)
+                      for x in novos]
+        o = Oferta(r["de"] or r["origem"], r["para"], melhor, None, dias[melhor])
+        cal = json.dumps([{"iso": d.isoformat(), "preco": v} for d, v in sorted(dias.items())])
+        with closing(conectar(caminho_db)) as db, db:
+            if mudou_dia:
+                # A companhia do dia novo não aparece no calendário: o link de compra passa a ser o Google Voos.
+                db.execute("UPDATE resultados SET cia='', nome_cia='', voo='', hora='', conexoes=0, link_cia='' "
+                           "WHERE id=?", (r["id"],))
+            db.execute("UPDATE resultados SET ida=?, preco=?, preco_radar=COALESCE(preco_radar, ?), conferido=?, "
+                       "link_google=?, milhas=?, calendario=? WHERE id=?",
+                       (melhor.isoformat(), dias[melhor], r["preco"], nota, link_google_flights(o),
+                        json.dumps(milhas), cal, r["id"]))
+        return dict(lido=True, mensagem=f"Calendário lido: {len(dias)} dias; o mais barato é {melhor:%d/%m}")
 
     def _ler_cia(r, texto: str) -> dict:
         ref = date.fromisoformat(r["ida"])

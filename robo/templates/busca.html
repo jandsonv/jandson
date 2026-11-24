@@ -31,9 +31,9 @@ summary{cursor:pointer;color:var(--marca);font-size:14px}
   <h1 id="titulo">{{ origens|join(', ') }} {{ '⇄' if b.ida_volta else '→' }} {{ b.nome_destino }}</h1>
   <p class="suave pequeno" id="situacao" role="status">Carregando…</p>
   <div id="campeao"></div>
-  <p style="margin:12px 0 0"><button type="button" id="conferir">⚡ Conferir preços reais dos melhores meses</button>
+  <p style="margin:12px 0 0"><button type="button" id="conferir">⚡ Conferir os melhores meses</button>
      <span id="conferir-status" class="suave pequeno" role="status"></span></p>
-  <p class="suave pequeno" style="margin:8px 0 0">O radar usa preços de buscas recentes. O botão abre os sites da companhia e de milhas no seu Chrome, um de cada vez, e a extensão lê o valor real (✓).</p>
+  <p class="suave pequeno" style="margin:8px 0 0">O radar usa preços de buscas recentes. O botão ⚡ abre no seu Chrome, um de cada vez, o calendário do Google Voos (o mês inteiro, todas as companhias), o site da companhia e os programas de milhas; a extensão lê os valores reais (✓) e fecha as abas.</p>
 </div>
 <div id="anos"></div>
 <script>
@@ -93,13 +93,25 @@ function cartaoPerna(rotulo, r){
   info.appendChild(document.createTextNode(dataCurta(r.ida) + " · " + nome(r.de) + " → " + nome(r.para) + (r.nome_cia ? " · " + r.nome_cia : "") + (r.hora ? " às " + r.hora : "") + " · " + (r.conexoes ? r.conexoes + " conexão(ões)" : "direto")));
   c.appendChild(info);
   const est = el("div", null, "info");
-  if (r.conferido) est.appendChild(el("span", "✓ preço lido no site", "ok"));
+  if (porGoogle(r)) est.appendChild(el("span", "✓ calendário do Google Voos (todas as companhias)", "ok"));
+  else if (r.conferido) est.appendChild(el("span", "✓ preço lido no site", "ok"));
   else est.appendChild(el("span", "preço do radar, ainda não conferido"));
   c.appendChild(est);
+  if (r.calendario) {
+    try {
+      const cal = JSON.parse(r.calendario).sort((a, b) => a.preco - b.preco).slice(0, 5);
+      if (cal.length > 1) {
+        const linha = el("div", "Dias mais baratos do mês: ", "info");
+        cal.forEach(x => linha.appendChild(el("span", x.iso.slice(8) + "/" + x.iso.slice(5, 7) + " " + rs(x.preco), "chip" + (x.iso === r.ida ? " bom" : ""))));
+        c.appendChild(linha);
+      }
+    } catch (e) {}
+  }
   const mm = melhorMilha(r);
   if (mm) c.appendChild(el("div", "Milhas: " + mm.nome + " " + mm.milhas.toLocaleString("pt-BR") + " ≈ " + rs(mm.reais) + (mm.reais < r.preco ? " (compensa)" : ""), "info"));
   const a = el("div", null, "acoes");
   if (r.link_cia) a.appendChild(link("/abrir/" + r.id + "/cia", "Comprar na " + r.nome_cia, "botao fino"));
+  else a.appendChild(link(r.link_google, "Ver no Google Voos", "botao fino"));
   const raio = el("button", "⚡ Conferir", "botao fino borda"); raio.type = "button";
   raio.addEventListener("click", () => pedirConferencia(linksDaLinha(r)));
   a.appendChild(raio);
@@ -191,8 +203,11 @@ const abertos = new Set();
 
 // Conferência com um clique: a extensão abre as páginas uma de cada vez, lê e fecha.
 const temExtensao = () => !!document.documentElement.dataset.radarExtensao;
+const porGoogle = r => (r.conferido || "").includes("Google");
 function linksDaLinha(r){
   const urls = [];
+  // 1º o calendário do Google Voos (mês inteiro, todas as companhias); depois o site da companhia; depois as milhas.
+  if (!porGoogle(r)) urls.push(location.origin + "/abrir/" + r.id + "/google");
   if (r.link_cia && !(r.conferido || "").startsWith("lido")) urls.push(location.origin + "/abrir/" + r.id + "/cia");
   if (COM_MILHAS) (r.milhas || []).forEach(m => { if (m.status !== "ok" && m.status !== "sem_voo") urls.push(location.origin + "/abrir/" + r.id + "/" + m.programa); });
   return urls;
@@ -208,11 +223,14 @@ document.getElementById("conferir").addEventListener("click", () => {
   if (!D) return;
   normalizar(D);
   // Os 3 meses mais baratos: primeiro os sites das companhias (podem trocar o dia), depois as milhas.
-  const meses = Object.values(resumoPorMes(D)).filter(m => m.total != null).sort((a, b) => a.total - b.total).slice(0, 3);
+  // Os 3 meses mais baratos (pelo total; sem volta no período, pelo preço da ida).
+  const custo = m => m.total != null ? m.total : m.ida.preco * (IDA_VOLTA ? 2 : 1);
+  const meses = Object.values(resumoPorMes(D)).filter(m => m.ida).sort((a, b) => custo(a) - custo(b)).slice(0, 3);
   const linhas = meses.flatMap(m => [m.ida, m.volta].filter(Boolean));
-  const cias = linhas.filter(r => r.link_cia && !(r.conferido || "").startsWith("lido")).map(r => location.origin + "/abrir/" + r.id + "/cia");
-  const milhas = linhas.flatMap(r => linksDaLinha(r).filter(u => !u.endsWith("/cia")));
-  pedirConferencia(cias.concat(milhas));
+  // Calendários primeiro (podem trocar o dia), depois sites das companhias, depois milhas.
+  const todos = linhas.flatMap(r => linksDaLinha(r));
+  const ordem = u => u.endsWith("/google") ? 0 : u.endsWith("/cia") ? 1 : 2;
+  pedirConferencia(todos.sort((a, b) => ordem(a) - ordem(b)));
 });
 window.addEventListener("message", ev => {
   if (ev.source !== window || !ev.data || !ev.data.radarProgresso) return;

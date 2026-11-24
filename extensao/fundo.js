@@ -4,6 +4,7 @@ const fila = [];
 let rodando = false;
 let atual = null;
 let abaDoPrograma = null;
+const abasCalendario = new Set();
 const espera = ms => new Promise(r => setTimeout(r, ms));
 
 function avisarPrograma(dados) {
@@ -21,10 +22,21 @@ async function processar() {
     try {
       aba = await chrome.tabs.create({ url, active: false });
     } catch (e) { continue; }
+    if (url.endsWith("/google")) abasCalendario.add(aba.id);
     await new Promise(resolve => {
-      const limite = setTimeout(() => resolve(false), 45000);
+      const limite = setTimeout(() => resolve(false), url.endsWith("/google") ? 30000 : 45000);
       atual = { tabId: aba.id, pronto: () => { clearTimeout(limite); setTimeout(() => resolve(true), 4000); } };
+      // Se a aba não saiu do programa (nada para abrir nesse site), segue para a próxima.
+      const vigia = (id, info) => {
+        if (id !== aba.id || info.status !== "complete") return;
+        chrome.tabs.get(id).then(t => {
+          if (t.url && t.url.includes("/abrir/")) { clearTimeout(limite); resolve(false); }
+        }).catch(() => {});
+      };
+      chrome.tabs.onUpdated.addListener(vigia);
+      setTimeout(() => chrome.tabs.onUpdated.removeListener(vigia), 46000);
     });
+    abasCalendario.delete(aba.id);
     atual = null;
     try { await chrome.tabs.remove(aba.id); } catch (e) {}
     feitos++;
@@ -35,10 +47,15 @@ async function processar() {
   rodando = false;
 }
 
-chrome.runtime.onMessage.addListener((msg, sender) => {
+chrome.runtime.onMessage.addListener((msg, sender, responder) => {
   if (msg && msg.tipo === "config") {
     // Endereço do programa (no seu Mac ou na internet) e a chave da sua conta.
     chrome.storage.local.set({ servidor: msg.servidor, chave: msg.chave });
+    return;
+  }
+  if (msg && msg.tipo === "souCalendario") {
+    // Só abre o calendário do Google nas abas que a própria extensão abriu pelo Radar.
+    responder(!!(sender.tab && abasCalendario.has(sender.tab.id)));
     return;
   }
   if (msg && msg.tipo === "conferir") {

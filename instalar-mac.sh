@@ -127,9 +127,52 @@ if [ ! -f dados/.extensao_mostrada ] && command -v open >/dev/null 2>&1; then
   mkdir -p dados && touch dados/.extensao_mostrada
 fi
 
+# Liga sozinho com o Mac (LaunchAgent): roda em segundo plano, sem Terminal, e volta se cair.
+ROTULO="com.radarpassagens.app"
+PLIST="$HOME/Library/LaunchAgents/$ROTULO.plist"
+if [ "$(uname)" = "Darwin" ]; then
+  azul "Deixando o Radar ligar sozinho com o Mac"
+  # Para a versão antiga, se estiver rodando (pelo Terminal ou em segundo plano).
+  launchctl bootout "gui/$(id -u)/$ROTULO" 2>/dev/null || true
+  pkill -f "$DESTINO/.venv/bin/python -m robo app" 2>/dev/null || true
+  mkdir -p "$HOME/Library/LaunchAgents" dados
+  cat > "$PLIST" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>$ROTULO</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$DESTINO/.venv/bin/python</string><string>-m</string><string>robo</string>
+    <string>app</string><string>--tailscale</string>
+  </array>
+  <key>WorkingDirectory</key><string>$DESTINO</string>
+  <key>EnvironmentVariables</key><dict><key>PYTHONUNBUFFERED</key><string>1</string></dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>10</integer>
+  <key>StandardOutPath</key><string>$DESTINO/dados/servidor.log</string>
+  <key>StandardErrorPath</key><string>$DESTINO/dados/servidor.log</string>
+</dict>
+</plist>
+PLIST
+  launchctl bootstrap "gui/$(id -u)" "$PLIST"
+  for _ in $(seq 1 30); do curl -s -o /dev/null -m 1 http://localhost:8000/login && break; sleep 0.5; done
+  if curl -s -o /dev/null -m 2 http://localhost:8000/login; then
+    echo "O Radar está ligado e vai ligar sozinho sempre que o Mac ligar."
+  else
+    aviso "O Radar não respondeu. Veja o registro em $DESTINO/dados/servidor.log"
+  fi
+  if [ -d "$ATALHO_DIR" ]; then
+    printf '#!/bin/bash\nexec "%s/parar-mac.command"\n' "$DESTINO" > "$ATALHO_DIR/Radar - desligar.command"
+    chmod +x "$ATALHO_DIR/Radar - desligar.command"
+  fi
+fi
+
 azul "Pronto!"
-echo "Para abrir de novo: dois cliques em 'Radar de Passagens' na Mesa."
-echo "Para fechar o programa: Ctrl+C nesta janela."
-if [ -z "${RADAR_NAO_ABRIR:-}" ]; then
-  exec ./abrir-mac.command
+echo "O Radar roda sozinho em segundo plano: pode fechar esta janela do Terminal."
+echo "Para abrir: dois cliques em 'Radar de Passagens' na Mesa, ou http://localhost:8000 no Chrome."
+if [ -z "${RADAR_NAO_ABRIR:-}" ] && command -v open >/dev/null 2>&1; then
+  open "http://localhost:8000"
 fi

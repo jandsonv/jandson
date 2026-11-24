@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Radar de Passagens - leitor",
-  "version": "1.2",
+  "version": "1.3",
   "description": "Lê os preços das páginas de companhias aéreas e programas de milhas que você abrir pelo Radar de Passagens e envia para a sua conta no Radar.",
   "host_permissions": [
     "http://localhost:8000/*",
@@ -33,7 +33,8 @@
         "https://*.smiles.com.br/*",
         "https://*.latamairlines.com/*",
         "https://*.voeazul.com.br/*",
-        "https://*.voegol.com.br/*"
+        "https://*.voegol.com.br/*",
+        "https://www.google.com/travel/flights*"
       ],
       "js": [
         "leitor.js"
@@ -50,6 +51,15 @@
         "ponte.js"
       ],
       "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://www.google.com/travel/flights*"
+      ],
+      "js": [
+        "calendario.js"
+      ],
+      "run_at": "document_idle"
     }
   ],
   "permissions": [

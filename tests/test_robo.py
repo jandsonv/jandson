@@ -373,3 +373,32 @@ def test_login_bloqueia_depois_de_muitas_tentativas(tmp_path, monkeypatch):
     for _ in range(9):
         tentar("errada")
     assert tentar("nova-senha-456").status_code == 429  # bloqueado mesmo com a senha certa
+
+
+def test_calendario_do_google_escolhe_o_dia_mais_barato_do_mes(tmp_path, monkeypatch):
+    import json as _json
+    from robo import web
+    cfg, db, r = _app_com_busca(tmp_path, monkeypatch, 0, modo="assistido")
+    with web.closing(web.conectar(db)) as cx, cx:
+        cx.execute("INSERT OR IGNORE INTO usuarios(nome, senha_hash) VALUES('a','x')")
+        rid = cx.execute("SELECT id FROM resultados WHERE trecho='ida'").fetchone()[0]
+    H = {"X-Radar-Chave": web.chave_do_usuario(db, "a")}
+    app = web.criar_app(cfg, db, fabrica_radar=lambda: r)
+    c = app.test_client()
+    with c.session_transaction() as s:
+        s["usuario"] = "a"
+    resp = c.get(f"/abrir/{rid}/google")
+    assert resp.status_code == 302 and "google.com/travel/flights" in resp.location
+    cal = [{"iso": "2027-03-03", "preco": 520}, {"iso": "2027-03-17", "preco": 298},
+           {"iso": "2027-03-18", "preco": 150},  # menos da metade do radar: ignorado
+           {"iso": "2027-04-01", "preco": 100}, {"iso": "lixo", "preco": 1}]
+    lido = c.post("/api/captura", headers=H, json={"url": "https://www.google.com/travel/flights?x", "calendario": cal}).json
+    assert lido["lido"] is True and "17/03" in lido["mensagem"]
+    d = [x for x in c.get("/api/busca/1").json["resultados"] if x["id"] == rid][0]
+    assert (d["ida"], d["preco"], d["link_cia"], d["nome_cia"]) == ("2027-03-17", 298.0, "", "")
+    assert "Google Voos" in d["conferido"] and "2027-03-17" in d["link_google"]
+    assert [x["iso"] for x in _json.loads(d["calendario"])] == ["2027-03-03", "2027-03-17"]
+    assert d["milhas"][0]["link"] == "https://s/2027-03-17"
+    # leitura vazia não estraga nada e fica guardada para calibrar
+    vazio = c.post("/api/captura", headers=H, json={"url": "https://www.google.com/travel/flights", "calendario": []}).json
+    assert vazio["lido"] is False and list((tmp_path / "diagnostico").glob("google-*.json"))
