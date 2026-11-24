@@ -20,6 +20,8 @@ const COM_MILHAS = {{ 'true' if b.com_milhas else 'false' }};
 const MESES = ["janeiro","fevereiro","março","abril","maio","junho","julho","agosto","setembro","outubro","novembro","dezembro"];
 const DIAS = ["dom","seg","ter","qua","qui","sex","sáb"];
 const rs = v => "R$ " + Math.round(v).toLocaleString("pt-BR");
+// Preço lido no site da companhia: mostra com centavos, como o site.
+const rsc = r => r.conferido ? "R$ " + r.preco.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : rs(r.preco);
 const nomeMes = m => MESES[+m.slice(5) - 1] + " de " + m.slice(0, 4);
 function dataBR(iso){ const d = new Date(iso + "T12:00:00"); return d.toLocaleDateString("pt-BR") + " (" + DIAS[d.getDay()] + ")"; }
 function el(tag, texto, classe){ const e = document.createElement(tag); if (texto != null) e.textContent = texto; if (classe) e.className = classe; return e; }
@@ -77,7 +79,7 @@ function desenhar(d){
       tdT.appendChild(el("div", (d.nomes[r.de] || r.de) + " → " + (d.nomes[r.para] || r.para), "pequeno suave"));
       tr.appendChild(tdT);
       tr.appendChild(el("td", dataBR(r.ida), "num"));
-      const tdP = el("td"); tdP.appendChild(el("div", rs(r.preco), "preco num"));
+      const tdP = el("td"); tdP.appendChild(el("div", rsc(r), "preco num"));
       if (r.conferido) tdP.appendChild(el("div", "✓ " + r.conferido + (r.preco_radar && Math.round(r.preco_radar) !== Math.round(r.preco) && !r.conferido.includes("indicava") ? " (radar: " + rs(r.preco_radar) + ")" : ""), "pequeno suave"));
       else if (terminou) tdP.appendChild(el("div", "preço do radar, não conferido", "pequeno suave"));
       tr.appendChild(tdP);
@@ -95,7 +97,7 @@ function desenhar(d){
   const dest = document.getElementById("destaque"); dest.replaceChildren();
   const frase = (rotulo, r) => {
     const p = el("p"); p.appendChild(el("span", rotulo));
-    p.appendChild(el("strong", rs(r.preco) + " em " + dataBR(r.ida)));
+    p.appendChild(el("strong", rsc(r) + " em " + dataBR(r.ida)));
     p.appendChild(el("span", ", " + (d.nomes[r.de] || r.de) + " → " + (d.nomes[r.para] || r.para) + (r.nome_cia ? ", pela " + r.nome_cia : "") + "."));
     return p;
   };
