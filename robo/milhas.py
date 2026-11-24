@@ -171,6 +171,23 @@ class Navegador:
         from playwright.sync_api import sync_playwright
 
         self._pw = sync_playwright().start()
+        self._abrir()
+        return self
+
+    def _nova_pagina(self):
+        """Nova aba; se a janela do robô foi fechada, abre outra e segue."""
+        try:
+            return self._ctx.new_page()
+        except Exception:
+            print("  [navegador] a janela do robô foi fechada; abrindo de novo.")
+            try:
+                self._ctx.close()
+            except Exception:
+                pass
+            self._abrir()
+            return self._ctx.new_page()
+
+    def _abrir(self) -> None:
         opcoes = dict(
             user_data_dir=str(PERFIL),
             headless=bool(self.cfg.get("navegador_oculto", False)),
@@ -198,7 +215,6 @@ class Navegador:
                     "Nenhum navegador encontrado. Instale o Google Chrome ou rode: "
                     "python -m playwright install chromium"
                 ) from ultimo_erro
-        return self
 
     def __exit__(self, *exc):
         try:
@@ -225,7 +241,7 @@ class Navegador:
     def ler_site_cia(self, link: str, referencia: date, rotulo: str = "") -> dict[date, float]:
         """Abre a busca no site da companhia e lê os preços do dia e dos dias vizinhos."""
         espera = float(self.cfg.get("espera_resultado_segundos", 45))
-        pagina = self._ctx.new_page()
+        pagina = self._nova_pagina()
         dias: dict[date, float] = {}
         texto = ""
         try:
@@ -273,7 +289,7 @@ class Navegador:
             except Exception:
                 pass
 
-        pagina = self._ctx.new_page()
+        pagina = self._nova_pagina()
         pagina.on("response", ao_receber)
         texto = ""
         try:
