@@ -41,7 +41,20 @@ O modo antigo, com o robô abrindo os sites sozinho, ainda existe (`modo_sites: 
 
 Se um site de milhas pedir verificação ou mudar de layout, o robô não tenta burlar: o alerta sai do mesmo jeito, com o link da busca pronto para você abrir.
 
-## Na internet (Railway)
+## Liga sozinho e funciona no celular (grátis)
+
+Depois do instalador, o Radar **liga sozinho quando o Mac liga** e fica rodando em segundo plano: não precisa de Terminal. Atalhos na Mesa: **Radar de Passagens** (abre no navegador) e **Radar - desligar**. O registro fica em `~/RadarPassagens/dados/servidor.log`.
+
+Para abrir no celular de qualquer lugar, use o **Tailscale** (grátis para uso pessoal), que cria uma rede privada só entre os seus aparelhos:
+
+1. No Mac, instale o Tailscale (tailscale.com/download ou App Store) e entre com sua conta Google ou Apple.
+2. No celular, instale o app Tailscale e entre com a mesma conta.
+3. No Mac, clique no ícone do Tailscale na barra de menus e copie o endereço do Mac (começa com `100.`).
+4. No celular, abra `http://ENDEREÇO-DO-MAC:8000` e entre com seu usuário e senha.
+
+Na primeira vez, o macOS pode perguntar se o Python pode aceitar conexões: clique em **Permitir**. O Radar só responde ao próprio Mac e aos seus aparelhos no Tailscale; outros aparelhos da rede Wi-Fi são recusados. O Mac precisa estar ligado. A conferência de preços (botão ⚡) é feita no Chrome do Mac, onde está a extensão; no celular você vê os resultados.
+
+## Na internet (Railway, pago — opcional)
 
 O programa pode ficar num servidor, com endereço próprio e login, acessível de qualquer lugar, sem Terminal. A extensão do Chrome continua sendo quem lê os preços nos sites (eles bloqueiam servidores e robôs); ela envia as leituras para a sua conta no servidor.
 
