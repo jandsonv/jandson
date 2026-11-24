@@ -1,0 +1,8 @@
+.env
+dados/
+saida/
+perfil-navegador/
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/

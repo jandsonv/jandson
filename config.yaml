@@ -1,0 +1,83 @@
+# ---------------------------------------------------------------
+# Configuração do robô de passagens. Edite à vontade.
+# ---------------------------------------------------------------
+
+# Aeroportos de saída (códigos IATA).
+origens: [AJU, SSA]
+
+# Destinos: "qualquer" ou uma lista, ex.: [GRU, GIG, LIS, SCL]
+destinos: qualquer
+
+# so_ida | ida_e_volta | ambos
+tipo_viagem: ambos
+
+# Só considera voos dentro desta janela (dias a partir de hoje).
+antecedencia_dias: {minimo: 10, maximo: 240}
+
+# Para ida e volta: duração aceitável da viagem, em dias.
+duracao_dias: {minimo: 3, maximo: 30}
+
+# Máximo de conexões por trecho (0 = só direto).
+max_conexoes: 2
+
+# "Preço bom" em dinheiro (R$, por pessoa). Abaixo do teto = alerta.
+preco_bom:
+  nacional: {so_ida: 350, ida_e_volta: 650}
+  internacional: {so_ida: 1800, ida_e_volta: 3200}
+  # Tetos específicos por destino, se quiser:
+  por_destino: {}
+  #  GRU: {so_ida: 300, ida_e_volta: 550}
+  #  LIS: {ida_e_volta: 3500}
+  # Também alerta se o preço cair este percentual abaixo da mediana
+  # que o robô já viu para a mesma rota (depois de 8 observações).
+  queda_sobre_historico_pct: 30
+
+# Quantas promoções em dinheiro, no máximo, viram alerta por rodada.
+max_alertas_por_rodada: 8
+
+# Realerta a mesma rota/data só se o preço cair mais este percentual.
+realertar_queda_pct: 10
+
+# ---------------------------------------------------------------
+# Milhas: consulta pontual no site do programa, só na rota e data
+# em que o preço em dinheiro já está bom.
+# ---------------------------------------------------------------
+milhas:
+  ativo: true
+  programas: [smiles, latam_pass, azul]
+  # Quanto vale para você cada 1.000 milhas, em R$ (para comparar com dinheiro).
+  valor_milheiro: {smiles: 16, latam_pass: 25, azul: 15}
+  # Ritmo de formiguinha: poucas consultas, com pausa entre elas.
+  max_consultas_por_rodada: 9
+  pausa_segundos: {minimo: 25, maximo: 70}
+  espera_resultado_segundos: 45
+  # true = janela escondida. Deixe false: os sites barram mais o modo escondido.
+  navegador_oculto: false
+  # Modelos de link de busca de cada programa. Se um site mudar, é só ajustar aqui.
+  # Campos: {origem} {destino} {ida} {volta} (AAAA-MM-DD), {ida_ms} {volta_ms}
+  # (milissegundos), {ida_mdy} {volta_mdy} (MM/DD/AAAA).
+  links:
+    smiles:
+      so_ida: "https://www.smiles.com.br/mfe/emissao-passagem/?adults=1&cabin=ALL&children=0&departureDate={ida_ms}&infants=0&isElegible=false&isFlexibleDateChecked=false&returnDate=&searchType=g3&segments=1&tripType=2&originAirport={origem}&originCity=&originCountry=&originAirportIsAny=false&destinationAirport={destino}&destinCity=&destinCountry=&destinAirportIsAny=false&novo-resultado-voos=true"
+      ida_e_volta: "https://www.smiles.com.br/mfe/emissao-passagem/?adults=1&cabin=ALL&children=0&departureDate={ida_ms}&infants=0&isElegible=false&isFlexibleDateChecked=false&returnDate={volta_ms}&searchType=g3&segments=1&tripType=1&originAirport={origem}&originCity=&originCountry=&originAirportIsAny=false&destinationAirport={destino}&destinCity=&destinCountry=&destinAirportIsAny=false&novo-resultado-voos=true"
+    latam_pass:
+      so_ida: "https://www.latamairlines.com/br/pt/oferta-voos?origin={origem}&outbound={ida}T12%3A00%3A00.000Z&destination={destino}&inbound=null&adt=1&chd=0&inf=0&trip=OW&cabin=Economy&redemption=true&sort=RECOMMENDED"
+      ida_e_volta: "https://www.latamairlines.com/br/pt/oferta-voos?origin={origem}&outbound={ida}T12%3A00%3A00.000Z&destination={destino}&inbound={volta}T12%3A00%3A00.000Z&adt=1&chd=0&inf=0&trip=RT&cabin=Economy&redemption=true&sort=RECOMMENDED"
+    azul:
+      so_ida: "https://www.voeazul.com.br/br/pt/home/selecao-voo?c[0].ds={origem}&c[0].std={ida_mdy}&c[0].as={destino}&p[0].t=ADT&p[0].c=1&p[0].cp=false&f.dl=3&f.dr=3&cc=PTS"
+      ida_e_volta: "https://www.voeazul.com.br/br/pt/home/selecao-voo?c[0].ds={origem}&c[0].std={ida_mdy}&c[0].as={destino}&c[1].ds={destino}&c[1].std={volta_mdy}&c[1].as={origem}&p[0].t=ADT&p[0].c=1&p[0].cp=false&f.dl=3&f.dr=3&cc=PTS"
+
+# ---------------------------------------------------------------
+# Sites de promoção: avisa quando sai post citando suas cidades.
+# ---------------------------------------------------------------
+promocoes:
+  ativo: true
+  feeds:
+    - https://www.melhoresdestinos.com.br/feed
+    - https://passageirodeprimeira.com/feed/
+  # Nomes das suas cidades como aparecem nos textos.
+  cidades: [Aracaju, Salvador]
+  # Só abre o post para procurar a cidade se o título tiver uma destas palavras.
+  palavras_titulo: [passagem, passagens, milhas, pontos, voe, voos, trecho, trechos, tarifa]
+  # Avisa também bônus de transferência de pontos para os seus programas.
+  bonus_transferencia: true
