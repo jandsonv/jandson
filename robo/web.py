@@ -397,7 +397,8 @@ def criar_app(cfg: dict, caminho_db=None, chromium: str | None = None, fabrica_r
                 "SELECT b.*, (SELECT MIN(preco) FROM resultados r WHERE r.busca_id=b.id) AS menor "
                 "FROM buscas b WHERE usuario=? ORDER BY id DESC LIMIT 15", (session["usuario"],)
             ).fetchall()
-        form = form or {"inicio": _mes_padrao(1), "fim": _mes_padrao(6), "destino": "", "origens": cfg["origens"],
+        form = form or {"inicio": _mes_padrao(1), "fim": _mes_padrao(6), "destino": "",
+                        "origem": ", ".join(cidades.nome(c) for c in cfg["origens"][:1]),
                         "milhas": True, "ida_volta": True, "varredura": False}
         return render_template(
             "inicio.html", erro=erro, form=form, buscas=buscas, max_meses=MAX_MESES,
@@ -411,7 +412,7 @@ def criar_app(cfg: dict, caminho_db=None, chromium: str | None = None, fabrica_r
     def buscar():
         f = request.form
         form = {"inicio": f.get("inicio", ""), "fim": f.get("fim", ""), "destino": f.get("destino", "").strip(),
-                "origens": [o for o in f.getlist("origens") if o in cfg["origens"]], "milhas": bool(f.get("milhas")),
+                "origem": f.get("origem", "").strip(), "milhas": bool(f.get("milhas")),
                 "ida_volta": f.get("tipo") == "ida_volta",
                 "varredura": bool(f.get("varredura")) and cfg.get("modo_sites", "assistido") == "robo"}
         try:
@@ -419,8 +420,15 @@ def criar_app(cfg: dict, caminho_db=None, chromium: str | None = None, fabrica_r
         except ValueError:
             meses = []
         destino = cidades.resolver(form["destino"]) if form["destino"] else None
-        if not form["origens"]:
-            return inicio("Escolha pelo menos uma origem.", form)
+        # Origem: uma cidade ou várias separadas por vírgula ("Aracaju, Salvador").
+        partes = [x.strip() for x in form["origem"].split(",") if x.strip()]
+        form["origens"] = [cidades.resolver(x) for x in partes]
+        if not partes:
+            return inicio("Diga de onde você sai.", form)
+        if None in form["origens"]:
+            ruim = partes[form["origens"].index(None)]
+            return inicio(f"Não reconheci a origem \"{ruim}\". Use o nome da cidade ou o código do aeroporto (ex.: AJU).", form)
+        form["origens"] = list(dict.fromkeys(form["origens"]))[:3]
         if not destino:
             return inicio("Não reconheci o destino. Use o nome da cidade ou o código do aeroporto (ex.: GRU).", form)
         if destino in form["origens"]:
@@ -500,11 +508,16 @@ def criar_app(cfg: dict, caminho_db=None, chromium: str | None = None, fabrica_r
 
     def _ler_cia(r, texto: str) -> dict:
         ref = date.fromisoformat(r["ida"])
+        # Trava: uma tarifa menos da metade do que o radar viu é quase sempre outra coisa
+        # (taxa, upgrade, bagagem), não a passagem.
+        piso = 0.5 * float(r["preco_radar"] or r["preco"])
         dias = {d: v for d, v in mod_milhas.ler_calendario(texto, ref).items()
-                if d.strftime("%Y-%m") == r["mes"] and d >= date.today()}
+                if d.strftime("%Y-%m") == r["mes"] and d >= date.today() and v >= piso}
         if not dias:
             # Sites sem a faixa de dias vizinhos (ex.: LATAM): lê o menor preço da lista de voos do dia.
             preco = mod_milhas.menor_preco_pagina(texto)
+            if preco is not None and preco < piso:
+                preco = None
             if preco is None:
                 return dict(lido=False, mensagem="Ainda não encontrei os preços nesta página.")
             dias = {ref: preco}

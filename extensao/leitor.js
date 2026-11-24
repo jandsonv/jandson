@@ -20,6 +20,6 @@
   const inicio = Date.now();
   const timer = setInterval(() => {
     if (Date.now() - inicio > 10 * 60 * 1000) return clearInterval(timer);
-    if (document.visibilityState === "visible") enviar();
+    enviar();
   }, 3000);
 })();

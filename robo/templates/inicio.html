@@ -2,25 +2,24 @@
 {% block conteudo %}
 <div class="cartao">
   <h1>Onde está o melhor preço?</h1>
-  <p class="suave">Escolha a rota e o período. O robô acha o dia mais barato de cada mês em dinheiro e confere as milhas nesse dia.</p>
+  <p class="suave">Escolha origem, destino e período. O radar mostra o melhor mês e o dia mais barato de cada mês, organizado por ano.</p>
   {% if erro %}<p class="erro" role="alert">{{ erro }}</p>{% endif %}
   <form method="post" action="{{ url_for('buscar') }}">
     <input type="hidden" name="csrf" value="{{ csrf() }}">
-    <p><label>Saindo de</label>
-      <span class="opcoes">{% for cod, nome in origens %}
-        <label><input type="checkbox" name="origens" value="{{ cod }}" {{ 'checked' if cod in form.origens }}> {{ nome }} ({{ cod }})</label>{% endfor %}
-      </span></p>
-    <p><label>Viagem</label>
-      <span class="opcoes">
-        <label><input type="radio" name="tipo" value="ida_volta" {{ 'checked' if form.ida_volta }}> Ida e volta</label>
-        <label><input type="radio" name="tipo" value="so_ida" {{ 'checked' if not form.ida_volta }}> Só ida</label>
-      </span></p>
     <div class="grade">
-      <p><label for="destino">Indo para</label><input type="text" id="destino" name="destino" value="{{ form.destino }}" placeholder="Cidade ou código, ex.: São Paulo ou GRU" required></p>
+      <p><label for="origem">Saindo de</label><input type="text" id="origem" name="origem" value="{{ form.origem }}" placeholder="Ex.: Aracaju (ou Aracaju, Salvador)" required></p>
+      <p><label for="destino">Indo para</label><input type="text" id="destino" name="destino" value="{{ form.destino }}" placeholder="Ex.: São Paulo ou GRU" required></p>
+    </div>
+    <div class="grade">
       <p><label for="inicio">De</label><input type="month" id="inicio" name="inicio" value="{{ form.inicio }}" required></p>
       <p><label for="fim">Até</label><input type="month" id="fim" name="fim" value="{{ form.fim }}" required></p>
+      <p><label>Viagem</label>
+        <span class="opcoes">
+          <label><input type="radio" name="tipo" value="ida_volta" {{ 'checked' if form.ida_volta }}> Ida e volta</label>
+          <label><input type="radio" name="tipo" value="so_ida" {{ 'checked' if not form.ida_volta }}> Só ida</label>
+        </span></p>
     </div>
-    {% if milhas_ativo %}<p class="opcoes"><label><input type="checkbox" name="milhas" value="1" {{ 'checked' if form.milhas }}> Conferir milhas (Smiles, LATAM Pass e Azul) no dia mais barato de cada mês</label></p>{% endif %}
+    {% if milhas_ativo %}<p class="opcoes"><label><input type="checkbox" name="milhas" value="1" {{ 'checked' if form.milhas }}> Mostrar também as milhas (Smiles, LATAM Pass e Azul)</label></p>{% endif %}
     {% if modo_robo %}<p class="opcoes"><label><input type="checkbox" name="varredura" value="1" {{ 'checked' if form.varredura }}> Varredura completa nos sites das companhias (mais precisa, bem mais lenta: use para 1 ou 2 meses)</label></p>{% endif %}
     <p class="suave pequeno">Até {{ max_meses }} meses por busca. {% if modo_robo %}Com milhas, cada mês leva alguns minutos por trecho, porque o robô consulta os sites devagar. {% endif %}{% if modo_robo %}A janela do Chrome que abrir é o robô trabalhando: não feche.{% else %}Depois, clique nos links do resultado: a página abre no seu Chrome e a extensão lê o preço.{% endif %}</p>
     <button>Procurar</button>

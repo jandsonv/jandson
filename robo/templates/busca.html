@@ -1,128 +1,231 @@
 {% extends "base.html" %}
 {% block titulo %}{{ origens|join(', ') }} {{ '⇄' if b.ida_volta else '→' }} {{ b.destino }}{% endblock %}
 {% block conteudo %}
+<style>
+.topo h1{margin-bottom:2px}
+.campeao{border:2px solid var(--bom);background:var(--bom-fundo);border-radius:14px;padding:16px 18px;margin:14px 0 4px}
+.campeao .rotulo{font-size:13px;font-weight:700;color:var(--bom);text-transform:uppercase;letter-spacing:.04em}
+.campeao .mes-grande{font-size:22px;font-weight:700;margin:2px 0 6px}
+.campeao .linha{margin:2px 0}
+.ano{margin:26px 0 8px;font-size:20px}
+.mes{background:var(--cartao);border:1px solid var(--borda);border-radius:14px;padding:14px 16px;margin-bottom:12px}
+.mes.melhor{border:2px solid var(--bom)}
+.mes-cab{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap}
+.mes-nome{font-size:18px;font-weight:700;text-transform:capitalize}
+.selo{display:inline-block;text-transform:none;background:var(--bom);color:var(--fundo);border-radius:999px;padding:2px 10px;font-size:12px;font-weight:700;margin-left:6px;vertical-align:middle}
+.total{font-size:15px;color:var(--suave)}
+.total strong{color:var(--texto);font-size:18px}
+.pernas{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));margin-top:10px}
+.perna{border:1px solid var(--borda);border-radius:10px;padding:10px 12px}
+.perna .rot{font-size:12px;font-weight:700;color:var(--suave);text-transform:uppercase;letter-spacing:.04em}
+.perna .valor{font-size:20px;font-weight:700;margin:2px 0}
+.perna .info{font-size:14px;color:var(--suave)}
+.perna .acoes{margin-top:8px}
+.ok{color:var(--bom);font-weight:600}
+details{margin-top:10px}
+summary{cursor:pointer;color:var(--marca);font-size:14px}
+.vazio{color:var(--suave);font-size:14px;margin-top:6px}
+</style>
 <p><a href="{{ url_for('inicio') }}">← Nova busca</a></p>
-<div class="cartao">
-  <h1>{{ origens|join(', ') }} {{ '⇄' if b.ida_volta else '→' }} {{ b.nome_destino }} ({{ b.destino }})</h1>
-  <p class="suave" id="situacao" role="status">Carregando…</p>
-  <div id="destaque"></div>
+<div class="cartao topo">
+  <h1 id="titulo">{{ origens|join(', ') }} {{ '⇄' if b.ida_volta else '→' }} {{ b.nome_destino }}</h1>
+  <p class="suave pequeno" id="situacao" role="status">Carregando…</p>
+  <div id="campeao"></div>
+  <p style="margin:12px 0 0"><button type="button" id="conferir">⚡ Conferir preços reais dos melhores meses</button>
+     <span id="conferir-status" class="suave pequeno" role="status"></span></p>
+  <p class="suave pequeno" style="margin:8px 0 0">O radar usa preços de buscas recentes. O botão abre os sites da companhia e de milhas no seu Chrome, um de cada vez, e a extensão lê o valor real (✓).</p>
 </div>
-<div class="cartao">
-  <h2>Dia mais barato de cada mês</h2>
-  <div class="rolagem"><table>
-    <thead><tr><th>Mês</th><th>Trecho</th><th>Melhor dia</th><th>Em dinheiro</th><th>Voo</th><th>Comprar</th>{% if b.com_milhas %}<th>Milhas nesse dia</th>{% endif %}</tr></thead>
-    <tbody id="linhas"></tbody>
-  </table></div>
-  <p class="suave pequeno">Clique em "Site da…" ou num programa de milhas: a página abre no seu Chrome, e a extensão Radar de Passagens lê o preço e atualiza esta tabela sozinha (o ícone dela mostra ✓ quando leu). Preço por pessoa, por trecho. Com ✓, o preço foi lido no site da companhia nesta busca; sem ✓, vem do radar (cache de buscas recentes) e pode ter mudado. As milhas não incluem as taxas. Em verde: milhas valendo menos que o dinheiro, pelo valor do milheiro configurado.</p>
-</div>
+<div id="anos"></div>
 <script>
 const COM_MILHAS = {{ 'true' if b.com_milhas else 'false' }};
+const IDA_VOLTA = {{ 'true' if b.ida_volta else 'false' }};
 const MESES = ["janeiro","fevereiro","março","abril","maio","junho","julho","agosto","setembro","outubro","novembro","dezembro"];
 const DIAS = ["dom","seg","ter","qua","qui","sex","sáb"];
 const rs = v => "R$ " + Math.round(v).toLocaleString("pt-BR");
-// Preço lido no site da companhia: mostra com centavos, como o site.
 const rsc = r => r.conferido ? "R$ " + r.preco.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : rs(r.preco);
-const nomeMes = m => MESES[+m.slice(5) - 1] + " de " + m.slice(0, 4);
-function dataBR(iso){ const d = new Date(iso + "T12:00:00"); return d.toLocaleDateString("pt-BR") + " (" + DIAS[d.getDay()] + ")"; }
+const nomeMes = m => MESES[+m.slice(5) - 1];
+function dataCurta(iso){ const d = new Date(iso + "T12:00:00"); return DIAS[d.getDay()] + ", " + d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }); }
 function el(tag, texto, classe){ const e = document.createElement(tag); if (texto != null) e.textContent = texto; if (classe) e.className = classe; return e; }
 function link(href, texto, classe){ const a = el("a", texto, classe); a.href = href; a.target = "_blank"; a.rel = "noopener"; return a; }
+let D = null;
+const nome = c => (D && D.nomes[c]) || c;
 
-function chipMilhas(m, precoDinheiro, rid){
-  const c = el("span", null, "chip");
-  let texto;
-  if (m.status === "ok" && m.milhas) {
-    texto = m.nome + ": " + m.milhas.toLocaleString("pt-BR") + (m.reais ? " ≈ " + rs(m.reais) : "");
-    if (m.reais && m.reais < precoDinheiro) c.classList.add("bom");
-  } else if (m.status === "sem_voo") texto = m.nome + ": sem voo";
-  else if (m.status === "bloqueado") texto = m.nome + ": o site barrou, abrir";
-  else if (m.status === "nao_consultado") texto = m.nome + ": na fila";
-  else if (m.status === "so_link") texto = m.nome + ": abrir busca";
-  else if (m.status === "abrir") texto = m.nome + ": abrir e ler";
-  else texto = m.nome + ": não li, abrir";
-  c.appendChild(link("/abrir/" + rid + "/" + m.programa, texto));
+function normalizar(d){ d.resultados.forEach(r => { r.trecho ||= "ida"; r.de ||= r.origem; r.para ||= d.destino; }); }
+
+// Por mês: a ida e a volta mais baratas.
+function resumoPorMes(d){
+  const meses = {};
+  d.meses.forEach(m => meses[m] = { mes: m, ida: null, volta: null, opcoes: [] });
+  d.resultados.forEach(r => {
+    const m = meses[r.mes]; if (!m) return;
+    m.opcoes.push(r);
+    if (!m[r.trecho] || r.preco < m[r.trecho].preco) m[r.trecho] = r;
+  });
+  // Volta: a mais barata depois da ida, em até 30 dias (pode cair no mês seguinte).
+  const voltas = d.resultados.filter(r => r.trecho === "volta");
+  Object.values(meses).forEach(m => {
+    if (!IDA_VOLTA || !m.ida) return;
+    const ida = new Date(m.ida.ida + "T12:00:00");
+    const depois = voltas.filter(v => new Date(v.ida + "T12:00:00") > ida && v.para === m.ida.de);
+    const ate30 = depois.filter(v => (new Date(v.ida + "T12:00:00") - ida) / 864e5 <= 30);
+    // A mais barata em até 30 dias; se não houver, a próxima volta disponível.
+    m.volta = ate30.length ? ate30.reduce((a, b) => (a.preco <= b.preco ? a : b))
+      : depois.length ? depois.reduce((a, b) => (a.ida <= b.ida ? a : b)) : null;
+    if (m.volta) m.dias = Math.round((new Date(m.volta.ida + "T12:00:00") - ida) / 864e5);
+  });
+  Object.values(meses).forEach(m => {
+    m.total = IDA_VOLTA ? (m.ida && m.volta ? m.ida.preco + m.volta.preco : null) : (m.ida ? m.ida.preco : null);
+  });
+  return meses;
+}
+
+function melhorMilha(r){
+  const ok = (r.milhas || []).filter(m => m.status === "ok" && m.reais);
+  return ok.length ? ok.reduce((a, b) => (a.reais <= b.reais ? a : b)) : null;
+}
+
+function cartaoPerna(rotulo, r){
+  const c = el("div", null, "perna");
+  c.appendChild(el("div", rotulo, "rot"));
+  if (!r) { c.appendChild(el("div", rotulo.startsWith("Volta") ? "Nenhuma volta dentro do período buscado. Aumente o \"Até\" para ver." : "Sem preço encontrado", "vazio")); return c; }
+  c.appendChild(el("div", rsc(r), "valor num"));
+  const info = el("div", null, "info");
+  info.appendChild(document.createTextNode(dataCurta(r.ida) + " · " + nome(r.de) + " → " + nome(r.para) + (r.nome_cia ? " · " + r.nome_cia : "") + (r.hora ? " às " + r.hora : "") + " · " + (r.conexoes ? r.conexoes + " conexão(ões)" : "direto")));
+  c.appendChild(info);
+  const est = el("div", null, "info");
+  if (r.conferido) est.appendChild(el("span", "✓ preço lido no site", "ok"));
+  else est.appendChild(el("span", "preço do radar, ainda não conferido"));
+  c.appendChild(est);
+  const mm = melhorMilha(r);
+  if (mm) c.appendChild(el("div", "Milhas: " + mm.nome + " " + mm.milhas.toLocaleString("pt-BR") + " ≈ " + rs(mm.reais) + (mm.reais < r.preco ? " (compensa)" : ""), "info"));
+  const a = el("div", null, "acoes");
+  if (r.link_cia) a.appendChild(link("/abrir/" + r.id + "/cia", "Comprar na " + r.nome_cia, "botao fino"));
+  const raio = el("button", "⚡ Conferir", "botao fino borda"); raio.type = "button";
+  raio.addEventListener("click", () => pedirConferencia(linksDaLinha(r)));
+  a.appendChild(raio);
+  c.appendChild(a);
   return c;
 }
 
-function normalizar(d){
-  d.resultados.forEach(r => { r.trecho ||= "ida"; r.de ||= r.origem; r.para ||= d.destino; });
-}
-
-function melhorCombinacao(d){
-  const idas = d.resultados.filter(r => r.trecho === "ida"), voltas = d.resultados.filter(r => r.trecho === "volta");
-  let melhor = null;
-  idas.forEach(i => voltas.forEach(v => {
-    if (v.origem === i.origem && v.ida > i.ida && (!melhor || i.preco + v.preco < melhor.total))
-      melhor = { ida: i, volta: v, total: i.preco + v.preco };
-  }));
-  return melhor;
+function tabelaOpcoes(m){
+  const t = el("table"); const cab = el("tr");
+  ["Trecho", "Dia", "Preço", "Voo", "Links", COM_MILHAS ? "Milhas" : null].filter(Boolean).forEach(h => cab.appendChild(el("th", h)));
+  t.appendChild(cab);
+  m.opcoes.sort((a, b) => (a.trecho > b.trecho) - (a.trecho < b.trecho) || a.preco - b.preco).forEach(r => {
+    const tr = el("tr");
+    tr.appendChild(el("td", (r.trecho === "volta" ? "Volta " : "Ida ") + nome(r.de) + " → " + nome(r.para)));
+    tr.appendChild(el("td", dataCurta(r.ida), "num"));
+    tr.appendChild(el("td", rsc(r) + (r.conferido ? " ✓" : ""), "num"));
+    tr.appendChild(el("td", [r.voo || r.nome_cia, r.hora].filter(Boolean).join(" · ")));
+    const l = el("td");
+    if (r.link_cia) l.appendChild(link("/abrir/" + r.id + "/cia", r.nome_cia, "botao fino"));
+    l.appendChild(link(r.link_google, "Google Voos", "botao fino borda"));
+    tr.appendChild(l);
+    if (COM_MILHAS) {
+      const td = el("td");
+      (r.milhas || []).forEach(x => {
+        const txt = x.status === "ok" && x.milhas ? x.nome + ": " + x.milhas.toLocaleString("pt-BR") + (x.reais ? " ≈ " + rs(x.reais) : "")
+          : x.status === "sem_voo" ? x.nome + ": sem voo" : x.status === "bloqueado" ? x.nome + ": abrir" : x.nome + ": abrir e ler";
+        const ch = el("span", null, "chip" + (x.status === "ok" && x.reais && x.reais < r.preco ? " bom" : ""));
+        ch.appendChild(link("/abrir/" + r.id + "/" + x.programa, txt)); td.appendChild(ch);
+      });
+      tr.appendChild(td);
+    }
+    t.appendChild(tr);
+  });
+  const w = el("div", null, "rolagem"); w.appendChild(t); return w;
 }
 
 function desenhar(d){
-  normalizar(d);
-  const corpo = document.getElementById("linhas"); corpo.replaceChildren();
-  const menorPor = {};
-  d.resultados.forEach(r => { if (!(r.trecho in menorPor) || r.preco < menorPor[r.trecho]) menorPor[r.trecho] = r.preco; });
-  const porMes = {}; d.resultados.forEach(r => (porMes[r.mes] ||= []).push(r));
-  const colunas = COM_MILHAS ? 7 : 6;
+  D = d; normalizar(d);
+  document.getElementById("titulo").textContent = [...new Set(d.resultados.filter(r => r.trecho === "ida").map(r => nome(r.de)))].join(", ")
+    .replace(/^$/, "{{ origens|join(', ') }}") + (IDA_VOLTA ? " ⇄ " : " → ") + nome(d.destino);
+  const meses = resumoPorMes(d);
+  const comTotal = Object.values(meses).filter(m => m.total != null);
+  const campeao = comTotal.length ? comTotal.reduce((a, b) => (a.total <= b.total ? a : b)) : null;
+
+  const cp = document.getElementById("campeao"); cp.replaceChildren();
+  if (campeao) {
+    const box = el("div", null, "campeao");
+    box.appendChild(el("div", "Melhor mês", "rotulo"));
+    box.appendChild(el("div", nomeMes(campeao.mes).replace(/^./, c => c.toUpperCase()) + " de " + campeao.mes.slice(0, 4) + " — " + (IDA_VOLTA ? rs(campeao.total) + " ida e volta" : rs(campeao.total)), "mes-grande num"));
+    if (campeao.ida) box.appendChild(el("div", "Ida " + dataCurta(campeao.ida.ida) + ": " + rsc(campeao.ida) + " · " + nome(campeao.ida.de) + " → " + nome(campeao.ida.para) + (campeao.ida.nome_cia ? ", " + campeao.ida.nome_cia : ""), "linha"));
+    if (campeao.volta) box.appendChild(el("div", "Volta " + dataCurta(campeao.volta.ida) + " (" + campeao.dias + " dias)" + ": " + rsc(campeao.volta) + " · " + nome(campeao.volta.de) + " → " + nome(campeao.volta.para) + (campeao.volta.nome_cia ? ", " + campeao.volta.nome_cia : ""), "linha"));
+    cp.appendChild(box);
+  }
+
+  const anos = document.getElementById("anos"); anos.replaceChildren();
   const terminou = d.status === "pronto" || d.status === "erro";
-  d.meses.forEach(mes => {
-    const lista = porMes[mes] || [];
-    if (!lista.length) {
-      const tr = el("tr"); tr.appendChild(el("td", nomeMes(mes)));
-      const td = el("td", terminou ? "Sem preço encontrado" : "Procurando…", "suave"); td.colSpan = colunas - 1;
-      tr.appendChild(td); corpo.appendChild(tr); return;
+  let anoAtual = null;
+  d.meses.forEach(mesId => {
+    const m = meses[mesId];
+    if (mesId.slice(0, 4) !== anoAtual) { anoAtual = mesId.slice(0, 4); anos.appendChild(el("h2", anoAtual, "ano")); }
+    const card = el("div", "", "mes" + (campeao && campeao.mes === mesId ? " melhor" : ""));
+    const cab = el("div", null, "mes-cab");
+    const n = el("div", nomeMes(mesId), "mes-nome");
+    if (campeao && campeao.mes === mesId) n.appendChild(el("span", "Melhor mês", "selo"));
+    cab.appendChild(n);
+    if (m.total != null) { const t = el("div", null, "total"); t.appendChild(document.createTextNode(IDA_VOLTA ? "ida + volta " : "a partir de ")); t.appendChild(el("strong", rs(m.total), "num")); cab.appendChild(t); }
+    card.appendChild(cab);
+    if (!m.opcoes.length) { card.appendChild(el("div", terminou ? "Sem preço encontrado neste mês." : "Procurando…", "vazio")); anos.appendChild(card); return; }
+    const pernas = el("div", null, "pernas");
+    pernas.appendChild(cartaoPerna("Ida mais barata do mês", m.ida));
+    if (IDA_VOLTA) pernas.appendChild(cartaoPerna("Volta" + (m.volta ? " · " + m.dias + " dias de viagem" : ""), m.volta));
+    card.appendChild(pernas);
+    if (m.opcoes.length > (IDA_VOLTA ? 2 : 1) || COM_MILHAS) {
+      const det = el("details"); det.dataset.mes = mesId;
+      if (abertos.has(mesId)) det.open = true;
+      det.addEventListener("toggle", () => det.open ? abertos.add(mesId) : abertos.delete(mesId));
+      det.appendChild(el("summary", "Ver todas as opções, links e milhas"));
+      det.appendChild(tabelaOpcoes(m));
+      card.appendChild(det);
     }
-    lista.forEach((r, i) => {
-      const tr = el("tr"); if (r.preco === menorPor[r.trecho]) tr.className = "melhor";
-      tr.appendChild(el("td", i === 0 ? nomeMes(mes) : ""));
-      const tdT = el("td"); tdT.appendChild(el("strong", r.trecho === "volta" ? "Volta" : "Ida"));
-      tdT.appendChild(el("div", (d.nomes[r.de] || r.de) + " → " + (d.nomes[r.para] || r.para), "pequeno suave"));
-      tr.appendChild(tdT);
-      tr.appendChild(el("td", dataBR(r.ida), "num"));
-      const tdP = el("td"); tdP.appendChild(el("div", rsc(r), "preco num"));
-      if (r.conferido) tdP.appendChild(el("div", "✓ " + r.conferido + (r.preco_radar && Math.round(r.preco_radar) !== Math.round(r.preco) && !r.conferido.includes("indicava") ? " (radar: " + rs(r.preco_radar) + ")" : ""), "pequeno suave"));
-      else if (terminou) tdP.appendChild(el("div", "preço do radar, não conferido", "pequeno suave"));
-      tr.appendChild(tdP);
-      const voo = [r.voo || r.nome_cia, r.hora ? "às " + r.hora : "", r.conexoes ? r.conexoes + " conexão(ões)" : "direto"].filter(Boolean).join(" · ");
-      tr.appendChild(el("td", voo));
-      const comprar = el("td");
-      if (r.link_cia) comprar.appendChild(link("/abrir/" + r.id + "/cia", "Site da " + r.nome_cia, "botao fino"));
-      comprar.appendChild(link(r.link_google, "Google Voos", "botao fino borda"));
-      tr.appendChild(comprar);
-      if (COM_MILHAS) { const td = el("td"); r.milhas.forEach(m => td.appendChild(chipMilhas(m, r.preco, r.id))); tr.appendChild(td); }
-      corpo.appendChild(tr);
-    });
+    anos.appendChild(card);
   });
 
-  const dest = document.getElementById("destaque"); dest.replaceChildren();
-  const frase = (rotulo, r) => {
-    const p = el("p"); p.appendChild(el("span", rotulo));
-    p.appendChild(el("strong", rsc(r) + " em " + dataBR(r.ida)));
-    p.appendChild(el("span", ", " + (d.nomes[r.de] || r.de) + " → " + (d.nomes[r.para] || r.para) + (r.nome_cia ? ", pela " + r.nome_cia : "") + "."));
-    return p;
-  };
-  ["ida", "volta"].forEach(t => {
-    const r = d.resultados.find(x => x.trecho === t && x.preco === menorPor[t]);
-    if (r) dest.appendChild(frase(t === "ida" ? "Ida mais barata: " : "Volta mais barata: ", r));
-  });
-  const combo = d.ida_volta && melhorCombinacao(d);
-  if (combo) {
-    const p = el("p"); p.appendChild(el("span", "Melhor ida e volta (mesma cidade, volta depois da ida): "));
-    p.appendChild(el("strong", rs(combo.total)));
-    p.appendChild(el("span", " — ida " + dataBR(combo.ida.ida) + ", volta " + dataBR(combo.volta.ida) + ", saindo de " + (d.nomes[combo.ida.origem] || combo.ida.origem) + "."));
-    dest.appendChild(p);
-  }
   const s = document.getElementById("situacao");
-  s.textContent = d.status === "pronto" ? (d.progresso || "Busca concluída.") : d.status === "erro" ? "Erro: " + d.progresso : d.progresso || "Procurando…";
-  s.className = d.status === "erro" ? "erro" : "suave";
+  s.textContent = d.status === "erro" ? "Erro: " + d.progresso : d.status === "pronto" ? (d.progresso && !d.progresso.startsWith("Radar pronto") ? d.progresso : "Busca concluída.") : (d.progresso || "Procurando…");
+  s.className = d.status === "erro" ? "erro" : "suave pequeno";
 }
+const abertos = new Set();
+
+// Conferência com um clique: a extensão abre as páginas uma de cada vez, lê e fecha.
+const temExtensao = () => !!document.documentElement.dataset.radarExtensao;
+function linksDaLinha(r){
+  const urls = [];
+  if (r.link_cia && !(r.conferido || "").startsWith("lido")) urls.push(location.origin + "/abrir/" + r.id + "/cia");
+  if (COM_MILHAS) (r.milhas || []).forEach(m => { if (m.status !== "ok" && m.status !== "sem_voo") urls.push(location.origin + "/abrir/" + r.id + "/" + m.programa); });
+  return urls;
+}
+function pedirConferencia(urls){
+  const st = document.getElementById("conferir-status");
+  if (!temExtensao()) { st.textContent = "Instale (ou atualize) a extensão Radar de Passagens no Chrome para conferir."; return; }
+  if (!urls.length) { st.textContent = "Já está tudo conferido."; return; }
+  window.postMessage({ radarConferir: urls }, location.origin);
+  st.textContent = "Conferindo " + urls.length + " página(s)… as abas abrem e fecham sozinhas em segundo plano.";
+}
+document.getElementById("conferir").addEventListener("click", () => {
+  if (!D) return;
+  normalizar(D);
+  // Os 3 meses mais baratos: primeiro os sites das companhias (podem trocar o dia), depois as milhas.
+  const meses = Object.values(resumoPorMes(D)).filter(m => m.total != null).sort((a, b) => a.total - b.total).slice(0, 3);
+  const linhas = meses.flatMap(m => [m.ida, m.volta].filter(Boolean));
+  const cias = linhas.filter(r => r.link_cia && !(r.conferido || "").startsWith("lido")).map(r => location.origin + "/abrir/" + r.id + "/cia");
+  const milhas = linhas.flatMap(r => linksDaLinha(r).filter(u => !u.endsWith("/cia")));
+  pedirConferencia(cias.concat(milhas));
+});
+window.addEventListener("message", ev => {
+  if (ev.source !== window || !ev.data || !ev.data.radarProgresso) return;
+  const p = ev.data.radarProgresso, st = document.getElementById("conferir-status");
+  st.textContent = p.fim ? "Conferência concluída (" + p.total + " página(s))." : "Conferindo: " + (p.feitos + 1) + " de " + p.total + "…";
+});
+
 async function atualizar(){
   try {
     const r = await fetch("{{ url_for('api_busca', busca_id=b.id) }}");
     if (r.status === 401) { location.href = "{{ url_for('login') }}"; return; }
-    const d = await r.json(); desenhar(d);
+    desenhar(await r.json());
   } catch (e) {}
-  // Continua atualizando: as leituras da extensão chegam enquanto você navega.
   setTimeout(atualizar, document.visibilityState === "visible" ? 3000 : 8000);
 }
 atualizar();

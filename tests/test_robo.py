@@ -148,7 +148,8 @@ def test_app_exige_login_e_isola_buscas(tmp_path):
     from robo.web import criar_app, criar_usuario
     criar_usuario(tmp_path / "a.db", "Ana", "segredo123")
     r = Radar("x", CFG)
-    r.cidades._mapa = {"GRU": {"nome": "São Paulo", "pais": "BR"}}
+    r.cidades._mapa = {"GRU": {"nome": "São Paulo", "pais": "BR"}, "AJU": {"nome": "Aracaju", "pais": "BR"},
+                       "SSA": {"nome": "Salvador", "pais": "BR"}}
     app = criar_app(dict(CFG, milhas={"ativo": False}), tmp_path / "a.db", fabrica_radar=lambda: r)
     app.executor.enfileirar = lambda i: None
     c = app.test_client()
@@ -159,8 +160,13 @@ def test_app_exige_login_e_isola_buscas(tmp_path):
     assert c.post("/login", data={"usuario": "ANA", "senha": "segredo123", "csrf": "t"}).status_code == 302
     with c.session_transaction() as s:
         s["csrf"] = "t"
-    resp = c.post("/buscar", data={"origens": "AJU", "destino": "GRU", "inicio": "2027-01", "fim": "2027-02", "csrf": "t"})
+    resp = c.post("/buscar", data={"origem": "Aracaju, ssa", "destino": "GRU", "inicio": "2027-01", "fim": "2027-02", "csrf": "t"})
     assert resp.status_code == 302 and c.get("/api/busca/1").json["meses"] == ["2027-01", "2027-02"]
+    assert set(c.get("/api/busca/1").json["nomes"]) == {"AJU", "SSA", "GRU"}
+    with c.session_transaction() as s:
+        s["csrf"] = "t"
+    ruim = c.post("/buscar", data={"origem": "Atlântida", "destino": "GRU", "inicio": "2027-01", "fim": "2027-02", "csrf": "t"})
+    assert "Não reconheci a origem" in ruim.get_data(as_text=True)
     outro = app.test_client()
     with outro.session_transaction() as s:
         s["usuario"] = "beto"
