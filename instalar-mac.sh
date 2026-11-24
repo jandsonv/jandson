@@ -114,7 +114,8 @@ fi
 ATALHO="$ATALHO_DIR/Radar de Passagens.command"
 if [ -d "$ATALHO_DIR" ]; then
   printf '#!/bin/bash\nexec "%s/abrir-mac.command"\n' "$DESTINO" > "$ATALHO"
-  chmod +x "$ATALHO"
+  printf '#!/bin/bash\nexec "%s/entrar-milhas-mac.command"\n' "$DESTINO" > "$ATALHO_DIR/Radar - entrar nas milhas.command"
+  chmod +x "$ATALHO" "$ATALHO_DIR/Radar - entrar nas milhas.command"
 fi
 
 azul "Pronto!"

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import queue
+import random
 import secrets
 import sqlite3
 import threading
@@ -17,7 +18,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 from . import milhas as mod_milhas
 from .config import DADOS, segredo
-from .radar import Radar, link_google_flights
+from .radar import Oferta, Radar, link_google_flights
 
 MAX_MESES = 12
 ESQUEMA = """
@@ -37,6 +38,12 @@ def conectar(caminho) -> sqlite3.Connection:
     db = sqlite3.connect(str(caminho), timeout=30)
     db.row_factory = sqlite3.Row
     db.executescript(ESQUEMA)
+    # Atualiza bancos criados por versões anteriores.
+    for tabela, coluna, tipo in (("buscas", "ida_volta", "INTEGER DEFAULT 0"), ("resultados", "trecho", "TEXT"),
+                                 ("resultados", "de", "TEXT"), ("resultados", "para", "TEXT"),
+                                 ("resultados", "preco_radar", "REAL"), ("buscas", "varredura", "INTEGER DEFAULT 0"), ("resultados", "conferido", "TEXT")):
+        if coluna not in {c[1] for c in db.execute(f"PRAGMA table_info({tabela})")}:
+            db.execute(f"ALTER TABLE {tabela} ADD COLUMN {coluna} {tipo}")
     return db
 
 
@@ -98,6 +105,65 @@ class Executor:
         with closing(conectar(self.caminho_db)) as db, db:
             db.execute("UPDATE buscas SET status=?, progresso=? WHERE id=?", (status, progresso, busca_id))
 
+    def _varrer(self, busca_id, nav, meses, trechos, cias, fila, cfg_m, gravar) -> None:
+        """Lê os preços de todos os dias de cada mês nos sites das companhias e fica com o melhor dia."""
+        hoje = date.today()
+        com_link = [(c, i) for c, i in cias.items() if i.get("link")]
+        tarefas = [(mes, t, c, i) for mes in meses for t in trechos for c, i in com_link]
+        por_rid = {rid: (o, rs) for _, rid, o, rs in fila}
+        for k, (mes, (trecho, casa, de, para), cia, info) in enumerate(tarefas, 1):
+            ano, m = map(int, mes.split("-"))
+            dias: dict[date, float] = {}
+            for ancora in (4, 11, 18, 25):
+                dia = date(ano, m, ancora)
+                if dia < hoje:
+                    continue
+                self._marcar(busca_id, "rodando", f"Varredura: {k} de {len(tarefas)} — {info.get('nome', cia)}, "
+                                                  f"{de} → {para}, semana de {dia:%d/%m/%Y}")
+                lidos = nav.ler_site_cia(mod_milhas.montar_link(info["link"], de, para, dia), dia,
+                                         f"varredura_{cia}_{de}-{para}_{dia}")
+                dias.update({d: v for d, v in lidos.items()
+                             if d.strftime("%Y-%m") == mes and d >= hoje and v < dias.get(d, 1e12)})
+                time.sleep(random.uniform(3, 8))
+            if not dias:
+                continue
+            melhor = min(dias, key=dias.get)
+            preco = dias[melhor]
+            # Compara com o que já está na tabela para esse mês, trecho e cidade.
+            with closing(conectar(self.caminho_db)) as db, db:
+                atual = db.execute("SELECT id, preco, conferido FROM resultados WHERE busca_id=? AND mes=? AND trecho=? AND origem=?",
+                                   (busca_id, mes, trecho, casa)).fetchone()
+                # Preço lido ao vivo vale mais que o do cache; só mantém o atual se ele também foi lido ao vivo e é menor.
+                if atual and atual["conferido"] and atual["preco"] <= preco:
+                    continue
+                o = Oferta(de, para, melhor, None, preco, cia=cia, nome_destino=para)
+                nota = f"varredura no site da {info.get('nome', cia)}"
+                valores = (mes, melhor.isoformat(), preco, cia, info.get("nome") or cia, "", "", 0,
+                           mod_milhas.montar_link(info["link"], de, para, melhor), link_google_flights(o), nota)
+                if atual:
+                    db.execute("UPDATE resultados SET preco_radar=COALESCE(preco_radar, preco) WHERE id=?", (atual["id"],))
+                    db.execute("UPDATE resultados SET mes=?, ida=?, preco=?, cia=?, nome_cia=?, voo=?, hora=?, conexoes=?, "
+                               "link_cia=?, link_google=?, conferido=? WHERE id=?", valores + (atual["id"],))
+                    rid = atual["id"]
+                else:
+                    rid = db.execute(
+                        "INSERT INTO resultados(busca_id,origem,mes,ida,preco,cia,nome_cia,voo,hora,conexoes,link_cia,"
+                        "link_google,conferido,trecho,de,para,milhas) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        (busca_id, casa) + valores + (trecho, de, para, "[]")).lastrowid
+            rs = mod_milhas.links_para(cfg_m, de, para, melhor, None)
+            gravar(rid, rs)
+            fila[:] = [x for x in fila if x[1] != rid] + [(preco, rid, o, rs)]
+            por_rid[rid] = (o, rs)
+        # Mantém só o mais barato de cada mês e trecho para a consulta de milhas.
+        melhores = {}
+        with closing(conectar(self.caminho_db)) as db:
+            for r in db.execute("SELECT id, mes, trecho, preco FROM resultados WHERE busca_id=?", (busca_id,)):
+                chave = (r["mes"], r["trecho"])
+                if chave not in melhores or r["preco"] < melhores[chave][1]:
+                    melhores[chave] = (r["id"], r["preco"])
+        escolhidos = {rid for rid, _ in melhores.values()}
+        fila[:] = sorted([x for x in fila if x[1] in escolhidos], key=lambda x: x[0])
+
     def executar(self, busca_id: int) -> None:
         cfg = self.cfg
         with closing(conectar(self.caminho_db)) as db:
@@ -108,63 +174,130 @@ class Executor:
             raise RuntimeError("Falta o TRAVELPAYOUTS_TOKEN no arquivo .env.")
         cias = cfg.get("companhias") or {}
 
-        # 1) Dinheiro: melhor dia de cada mês
-        achados = []  # (id do resultado, Oferta)
-        total = len(origens) * len(meses)
-        for n, (origem, mes) in enumerate(((o, m) for o in origens for m in meses), 1):
-            self._marcar(busca_id, "rodando", f"Preços em dinheiro: {n} de {total} ({origem}, {mes})")
+        # Trechos: (trecho, cidade de casa, de, para)
+        trechos = [("ida", o, o, destino) for o in origens]
+        if b["ida_volta"]:
+            trechos += [("volta", o, destino, o) for o in origens]
+
+        # 1) Dinheiro: melhor dia de cada mês, em cada trecho
+        achados = []  # (id do resultado, trecho, mês, Oferta)
+        tarefas = [(mes, t) for mes in meses for t in trechos]
+        for n, (mes, (trecho, casa, de, para)) in enumerate(tarefas, 1):
+            self._marcar(busca_id, "rodando", f"Preços em dinheiro: {n} de {len(tarefas)} ({de} → {para}, {mes})")
             try:
-                o = radar.melhor_do_mes(origem, destino, mes)
+                o = radar.melhor_do_mes(de, para, mes)
             except Exception as e:
-                print(f"[app] {origem}-{destino} {mes}: {type(e).__name__}: {str(e)[:150]}")
+                print(f"[app] {de}-{para} {mes}: {type(e).__name__}: {str(e)[:150]}")
                 o = None
             if not o:
                 continue
             info = cias.get(o.cia) or {}
-            link_cia = ""
-            if info.get("link"):
-                link_cia = mod_milhas.montar_link(info["link"], origem, destino, o.ida)
+            link_cia = mod_milhas.montar_link(info["link"], de, para, o.ida) if info.get("link") else ""
             with closing(conectar(self.caminho_db)) as db, db:
                 cur = db.execute(
                     "INSERT INTO resultados(busca_id,origem,mes,ida,preco,cia,nome_cia,voo,hora,conexoes,"
-                    "link_cia,link_google,milhas) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                    (busca_id, origem, mes, o.ida.isoformat(), o.preco, o.cia, info.get("nome") or o.cia,
-                     o.voo, o.hora_ida, o.conexoes, link_cia, link_google_flights(o), "[]"),
+                    "link_cia,link_google,milhas,trecho,de,para) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (busca_id, casa, mes, o.ida.isoformat(), o.preco, o.cia, info.get("nome") or o.cia,
+                     o.voo, o.hora_ida, o.conexoes, link_cia, link_google_flights(o), "[]", trecho, de, para),
                 )
-                achados.append((cur.lastrowid, o))
+                achados.append((cur.lastrowid, trecho, mes, o))
             time.sleep(0.3)
 
-        # 2) Milhas: só no melhor dia de cada mês
+        # 2) Milhas: links para todos; consulta de verdade no mais barato de cada mês e trecho
         cfg_m = cfg.get("milhas", {})
-        if b["com_milhas"] and achados:
-            valores = cfg_m.get("valor_milheiro", {})
-            pendentes = [(rid, o, mod_milhas.links_para(cfg_m, o.origem, o.destino, o.ida, None)) for rid, o in achados]
-            total = sum(len(rs) for _, _, rs in pendentes)
-            n = 0
+        valores = cfg_m.get("valor_milheiro", {})
 
-            def gravar(rid, rs):
-                dados = [
-                    dict(programa=r.programa, nome=r.nome, status=r.status, milhas=r.milhas, link=r.link,
-                         reais=round(r.milhas / 1000 * float(valores.get(r.programa, 0))) if r.milhas else None)
-                    for r in rs
-                ]
-                with closing(conectar(self.caminho_db)) as db, db:
-                    db.execute("UPDATE resultados SET milhas=? WHERE id=?", (json.dumps(dados), rid))
+        def gravar(rid, rs):
+            dados = [
+                dict(programa=r.programa, nome=r.nome, status=r.status, milhas=r.milhas, link=r.link,
+                     reais=round(r.milhas / 1000 * float(valores.get(r.programa, 0))) if r.milhas else None)
+                for r in rs
+            ]
+            with closing(conectar(self.caminho_db)) as db, db:
+                db.execute("UPDATE resultados SET milhas=? WHERE id=?", (json.dumps(dados), rid))
 
-            for rid, _, rs in pendentes:
-                gravar(rid, rs)  # os links já aparecem enquanto a leitura não chega
-            try:
-                with mod_milhas.Navegador(cfg_m, self.chromium) as nav:
-                    for rid, o, rs in pendentes:
-                        for r in rs:
-                            n += 1
-                            self._marcar(busca_id, "rodando", f"Milhas: {n} de {total} ({r.nome}, {o.origem}, {o.ida:%d/%m/%Y})")
-                            nav.consultar(r, f"{o.rota}_{o.ida}")
+        conferir = cfg.get("conferir_no_site", True)
+        if not b["varredura"] and not (achados and (b["com_milhas"] or conferir)):
+            self._marcar(busca_id, "pronto", "" if achados else "Nenhum preço encontrado para essa rota nesses meses.")
+            return
+        mais_barato = {}
+        for rid, trecho, mes, o in achados:
+            if (mes, trecho) not in mais_barato or o.preco < mais_barato[(mes, trecho)][1].preco:
+                mais_barato[(mes, trecho)] = (rid, o)
+        escolhidos = {rid for rid, _ in mais_barato.values()}
+        if cfg_m.get("consultar", "melhor_do_mes") == "todos":
+            escolhidos = {rid for rid, *_ in achados}
+        fila = []
+        for rid, _, _, o in achados:
+            rs = mod_milhas.links_para(cfg_m, o.origem, o.destino, o.ida, None)
+            if rid not in escolhidos:
+                for r in rs:
+                    r.status = "so_link"
+            gravar(rid, rs)  # os links aparecem logo, antes da leitura
+            if rid in escolhidos:
+                fila.append((o.preco, rid, o, rs))
+        fila.sort(key=lambda x: x[0])  # as opções mais baratas são conferidas primeiro
+        if not b["com_milhas"]:
+            fila = [(p, rid, o, []) for p, rid, o, _ in fila]
+        total = sum(len(rs) for *_, rs in fila)
+        n, inicio = 0, time.time()
+        try:
+            with mod_milhas.Navegador(cfg_m, self.chromium) as nav:
+                # 2a) Varredura completa: percorre o mês inteiro no site de cada companhia.
+                if b["varredura"]:
+                    self._varrer(busca_id, nav, meses, trechos, cias, fila, cfg_m, gravar)
+                    if not b["com_milhas"]:
+                        fila[:] = [(p, rid, o, []) for p, rid, o, _ in fila]
+                # 2b) Preço real no site da companhia: confere o dia e os vizinhos do mesmo mês.
+                if conferir and not b["varredura"]:
+                    for k, (preco, rid, o, rs) in enumerate(fila, 1):
+                        info = cias.get(o.cia) or {}
+                        if not info.get("link"):
+                            continue
+                        self._marcar(busca_id, "rodando",
+                                     f"Conferindo no site da {info.get('nome', o.cia)}: {k} de {len(fila)} "
+                                     f"({o.origem} → {o.destino}, {o.ida:%m/%Y})")
+                        dias = nav.ler_site_cia(mod_milhas.montar_link(info["link"], o.origem, o.destino, o.ida),
+                                                o.ida, f"{o.rota}_{o.ida}")
+                        dias = {d: v for d, v in dias.items() if d.strftime("%Y-%m") == o.ida.strftime("%Y-%m")
+                                and d >= date.today()}
+                        if not dias:
+                            continue
+                        melhor_dia = min(dias, key=dias.get)
+                        nota = f"conferido no site da {info.get('nome', o.cia)}"
+                        if melhor_dia != o.ida:
+                            nota += f"; o radar indicava {o.ida:%d/%m} por R$ {o.preco:,.0f}".replace(",", ".")
+                            o.ida, o.voo, o.hora_ida = melhor_dia, "", ""
+                            o.link = ""
+                            rs[:] = mod_milhas.links_para(cfg_m, o.origem, o.destino, o.ida, None) if rs else []
+                        preco_radar, o.preco = o.preco, dias[melhor_dia]
+                        with closing(conectar(self.caminho_db)) as db, db:
+                            db.execute(
+                                "UPDATE resultados SET ida=?, preco=?, preco_radar=?, conferido=?, voo=?, hora=?, "
+                                "link_cia=?, link_google=? WHERE id=?",
+                                (o.ida.isoformat(), o.preco, preco_radar, nota, o.voo, o.hora_ida,
+                                 mod_milhas.montar_link(info["link"], o.origem, o.destino, o.ida),
+                                 link_google_flights(o), rid),
+                            )
+                        if rs:
                             gravar(rid, rs)
-            except Exception as e:
-                self._marcar(busca_id, "pronto", f"Não consegui abrir o navegador para as milhas ({type(e).__name__}). Os links seguem abaixo.")
-                return
-        self._marcar(busca_id, "pronto", "" if achados else "Nenhum preço encontrado para essa rota nesses meses.")
+                # 2c) Milhas no dia escolhido
+                for _, rid, o, rs in fila:
+                    for r in rs:
+                        resta = ""
+                        if n:
+                            minutos = round((time.time() - inicio) / n * (total - n) / 60)
+                            resta = f" · faltam cerca de {max(minutos, 1)} min"
+                        n += 1
+                        self._marcar(busca_id, "rodando",
+                                     f"Milhas: {n} de {total} ({r.nome}, {o.origem} → {o.destino}, {o.ida:%d/%m/%Y}){resta}")
+                        nav.consultar(r, f"{o.rota}_{o.ida}")
+                        gravar(rid, rs)
+        except Exception as e:
+            self._marcar(busca_id, "pronto",
+                         f"Não consegui abrir o navegador para as milhas ({type(e).__name__}). Os links seguem abaixo.")
+            return
+        self._marcar(busca_id, "pronto", "")
 
 
 def criar_app(cfg: dict, caminho_db=None, chromium: str | None = None, fabrica_radar=None) -> Flask:
@@ -238,7 +371,8 @@ def criar_app(cfg: dict, caminho_db=None, chromium: str | None = None, fabrica_r
                 "SELECT b.*, (SELECT MIN(preco) FROM resultados r WHERE r.busca_id=b.id) AS menor "
                 "FROM buscas b WHERE usuario=? ORDER BY id DESC LIMIT 15", (session["usuario"],)
             ).fetchall()
-        form = form or {"inicio": _mes_padrao(1), "fim": _mes_padrao(6), "destino": "", "origens": cfg["origens"], "milhas": True}
+        form = form or {"inicio": _mes_padrao(1), "fim": _mes_padrao(6), "destino": "", "origens": cfg["origens"],
+                        "milhas": True, "ida_volta": True, "varredura": False}
         return render_template(
             "inicio.html", erro=erro, form=form, buscas=buscas, max_meses=MAX_MESES,
             origens=[(c, cidades.nome(c)) for c in cfg["origens"]],
@@ -250,7 +384,8 @@ def criar_app(cfg: dict, caminho_db=None, chromium: str | None = None, fabrica_r
     def buscar():
         f = request.form
         form = {"inicio": f.get("inicio", ""), "fim": f.get("fim", ""), "destino": f.get("destino", "").strip(),
-                "origens": [o for o in f.getlist("origens") if o in cfg["origens"]], "milhas": bool(f.get("milhas"))}
+                "origens": [o for o in f.getlist("origens") if o in cfg["origens"]], "milhas": bool(f.get("milhas")),
+                "ida_volta": f.get("tipo") == "ida_volta", "varredura": bool(f.get("varredura"))}
         try:
             meses = lista_meses(form["inicio"], form["fim"])
         except ValueError:
@@ -266,10 +401,11 @@ def criar_app(cfg: dict, caminho_db=None, chromium: str | None = None, fabrica_r
             return inicio("Confira o período: o mês final precisa ser igual ou depois do inicial.", form)
         with closing(conectar(caminho_db)) as db, db:
             cur = db.execute(
-                "INSERT INTO buscas(usuario,origens,destino,nome_destino,meses,com_milhas,status,progresso,criado_em) "
-                "VALUES(?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO buscas(usuario,origens,destino,nome_destino,meses,com_milhas,status,progresso,criado_em,"
+                "ida_volta,varredura) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                 (session["usuario"], json.dumps(form["origens"]), destino, cidades.nome(destino), json.dumps(meses),
-                 int(form["milhas"] and cfg.get("milhas", {}).get("ativo", True)), "na_fila", "Na fila…", time.time()),
+                 int(form["milhas"] and cfg.get("milhas", {}).get("ativo", True)), "na_fila", "Na fila…", time.time(), int(form["ida_volta"]),
+                 int(form["varredura"])),
             )
         executor.enfileirar(cur.lastrowid)
         return redirect(url_for("ver_busca", busca_id=cur.lastrowid))
@@ -279,7 +415,7 @@ def criar_app(cfg: dict, caminho_db=None, chromium: str | None = None, fabrica_r
             b = db.execute("SELECT * FROM buscas WHERE id=? AND usuario=?", (busca_id, session["usuario"])).fetchone()
             if not b:
                 abort(404)
-            rs = db.execute("SELECT * FROM resultados WHERE busca_id=? ORDER BY mes, preco", (busca_id,)).fetchall()
+            rs = db.execute("SELECT * FROM resultados WHERE busca_id=? ORDER BY mes, trecho, preco", (busca_id,)).fetchall()
         return b, rs
 
     @app.route("/busca/<int:busca_id>")
@@ -293,8 +429,9 @@ def criar_app(cfg: dict, caminho_db=None, chromium: str | None = None, fabrica_r
     def api_busca(busca_id):
         b, rs = _busca(busca_id)
         return jsonify(
-            status=b["status"], progresso=b["progresso"], meses=json.loads(b["meses"]),
-            nomes={c: cidades.nome(c) for c in json.loads(b["origens"])},
+            status=b["status"], progresso=b["progresso"], meses=json.loads(b["meses"]), ida_volta=bool(b["ida_volta"]),
+            destino=b["destino"], nome_destino=b["nome_destino"],
+            nomes={c: cidades.nome(c) for c in json.loads(b["origens"]) + [b["destino"]]},
             resultados=[{**{k: r[k] for k in r.keys() if k not in ("milhas", "busca_id")},
                          "milhas": json.loads(r["milhas"] or "[]")} for r in rs],
         )

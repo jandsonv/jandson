@@ -6,6 +6,7 @@ resultado volta só com o link pronto para abrir manualmente.
 """
 from __future__ import annotations
 
+import json
 import random
 import re
 import time
@@ -81,7 +82,71 @@ def extrair_milhas(texto: str) -> int | None:
     return min(valores) if valores else None
 
 
-def classificar(texto: str) -> tuple[str, int | None]:
+_CHAVE_MILHAS = re.compile(r"mile|milha|point|ponto|pts", re.I)
+_CHAVE_IGNORAR = re.compile(
+    r"balance|saldo|earn|accru|acumul|bonus|club|clube|tier|qualif|transfer|purchase|buy|compra|"
+    r"accumul|elite|status|expir|venc|gift|reward",
+    re.I,
+)
+
+
+def extrair_milhas_json(dado, _chave: str = "") -> list[int]:
+    """Valores de milhas/pontos em dados JSON (as respostas que o site carrega por trás da página)."""
+    achados: list[int] = []
+    if isinstance(dado, dict):
+        for k, v in dado.items():
+            k = str(k)
+            if isinstance(v, (int, float, str)) and not isinstance(v, bool):
+                if _CHAVE_MILHAS.search(k) and not _CHAVE_IGNORAR.search(k):
+                    try:
+                        n = int(float(str(v).replace(".", "") if isinstance(v, str) else v))
+                    except ValueError:
+                        continue
+                    if 1500 <= n <= 2_000_000:
+                        achados.append(n)
+            elif not _CHAVE_IGNORAR.search(k):
+                achados += extrair_milhas_json(v, k)
+    elif isinstance(dado, list):
+        for v in dado:
+            achados += extrair_milhas_json(v, _chave)
+    return achados
+
+
+_MESES_ABREV = {"jan": 1, "fev": 2, "mar": 3, "abr": 4, "mai": 5, "jun": 6, "jul": 7, "ago": 8,
+                "set": 9, "out": 10, "nov": 11, "dez": 12}
+_RE_DIA_PRECO = re.compile(
+    r"(?:dom|seg|ter|qua|qui|sex|s[áa]b)\w*\.?,?\s+(\d{1,2})\s+(?:de\s+)?"
+    r"(jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)\w*\.?"
+    r"(?:(?!(?:dom|seg|ter|qua|qui|sex|s[áa]b)\w*\.?,?\s+\d{1,2}\s).){0,80}?"
+    r"(?:R\$|BRL)\s*(\d{1,3}(?:\.\d{3})*,\d{2})",
+    re.I | re.S,
+)
+
+
+def ler_calendario(texto: str, referencia: date) -> dict[date, float]:
+    """Lê a faixa de dias vizinhos com preço ('Sex, 25 Dez · A partir de BRL 390,52')."""
+    dias: dict[date, float] = {}
+    for m in _RE_DIA_PRECO.finditer(texto):
+        dia, mes = int(m.group(1)), _MESES_ABREV[m.group(2).lower()[:3]]
+        preco = float(m.group(3).replace(".", "").replace(",", "."))
+        candidatos = []
+        for ano in (referencia.year - 1, referencia.year, referencia.year + 1):
+            try:
+                candidatos.append(date(ano, mes, dia))
+            except ValueError:
+                pass
+        if not candidatos:
+            continue
+        d = min(candidatos, key=lambda x: abs((x - referencia).days))
+        if d not in dias or preco < dias[d]:
+            dias[d] = preco
+    return dias
+
+
+def classificar(texto: str, dados_json: list | None = None) -> tuple[str, int | None]:
+    valores = [n for d in (dados_json or []) for n in extrair_milhas_json(d)]
+    if valores:
+        return "ok", min(valores)
     milhas = extrair_milhas(texto)
     if milhas:
         return "ok", milhas
@@ -143,34 +208,102 @@ class Navegador:
             if self._pw:
                 self._pw.stop()
 
-    def consultar(self, r: ResultadoMilhas, rotulo: str = "") -> ResultadoMilhas:
-        if self._consultas:
-            pausa = self.cfg.get("pausa_segundos", {})
-            time.sleep(random.uniform(pausa.get("minimo", 25), pausa.get("maximo", 70)))
-        self._consultas += 1
+    def abrir_para_login(self, links: list[str]) -> None:
+        """Abre os sites em abas da janela do robô e espera você fechar a janela."""
+        for link in links:
+            self._ctx.new_page().goto(link, wait_until="domcontentloaded", timeout=60_000)
+        for p in list(self._ctx.pages):
+            if p.url == "about:blank" and len(self._ctx.pages) > 1:
+                p.close()
+        print("Entre nas suas contas nas abas abertas. Quando terminar, feche a janela do navegador.")
+        while self._ctx.pages:
+            try:
+                self._ctx.pages[0].wait_for_timeout(1000)
+            except Exception:
+                break
+
+    def ler_site_cia(self, link: str, referencia: date, rotulo: str = "") -> dict[date, float]:
+        """Abre a busca no site da companhia e lê os preços do dia e dos dias vizinhos."""
         espera = float(self.cfg.get("espera_resultado_segundos", 45))
         pagina = self._ctx.new_page()
+        dias: dict[date, float] = {}
+        texto = ""
         try:
-            pagina.goto(r.link, wait_until="domcontentloaded", timeout=60_000)
-            texto, fim = "", time.time() + espera
+            pagina.goto(link, wait_until="domcontentloaded", timeout=60_000)
+            fim = time.time() + espera
             while time.time() < fim:
                 pagina.wait_for_timeout(3000)
                 texto = pagina.inner_text("body", timeout=10_000)
-                r.status, r.milhas = classificar(texto)
+                dias = ler_calendario(texto, referencia)
+                if referencia in dias:
+                    pagina.wait_for_timeout(2000)
+                    texto = pagina.inner_text("body", timeout=10_000)
+                    dias = ler_calendario(texto, referencia) or dias
+                    break
+        except Exception as e:
+            print(f"  [cia] {type(e).__name__}: {str(e)[:150]}")
+        finally:
+            try:
+                SAIDA.mkdir(parents=True, exist_ok=True)
+                base = SAIDA / re.sub(r"[^\w-]+", "_", f"cia_{rotulo}")
+                pagina.screenshot(path=f"{base}.png")
+                base.with_suffix(".txt").write_text(f"{pagina.url}\n\n{texto}", encoding="utf-8")
+            except Exception:
+                pass
+            pagina.close()
+        return dias
+
+    def consultar(self, r: ResultadoMilhas, rotulo: str = "") -> ResultadoMilhas:
+        if self._consultas:
+            pausa = self.cfg.get("pausa_segundos", {})
+            time.sleep(random.uniform(pausa.get("minimo", 12), pausa.get("maximo", 35)))
+        self._consultas += 1
+        espera = float(self.cfg.get("espera_resultado_segundos", 45))
+        respostas: list[tuple[str, object]] = []
+
+        def ao_receber(resp):
+            try:
+                tipo = resp.headers.get("content-type", "")
+                if "json" not in tipo or resp.request.resource_type not in ("xhr", "fetch"):
+                    return
+                corpo = resp.body()
+                if len(corpo) > 5_000_000:
+                    return
+                respostas.append((resp.url, json.loads(corpo)))
+            except Exception:
+                pass
+
+        pagina = self._ctx.new_page()
+        pagina.on("response", ao_receber)
+        texto = ""
+        try:
+            pagina.goto(r.link, wait_until="domcontentloaded", timeout=60_000)
+            fim = time.time() + espera
+            while time.time() < fim:
+                pagina.wait_for_timeout(3000)
+                texto = pagina.inner_text("body", timeout=10_000)
+                r.status, r.milhas = classificar(texto, [d for _, d in respostas])
                 if r.status in ("ok", "sem_voo", "bloqueado"):
                     break
             if r.status == "ok":
                 # Dá tempo de a lista terminar de carregar e relê para pegar o menor valor.
                 pagina.wait_for_timeout(4000)
-                r.status, r.milhas = classificar(pagina.inner_text("body", timeout=10_000))
-            SAIDA.mkdir(parents=True, exist_ok=True)
-            base = SAIDA / re.sub(r"[^\w-]+", "_", f"{r.programa}_{rotulo}")
-            pagina.screenshot(path=f"{base}.png")
-            (base.with_suffix(".txt")).write_text(texto, encoding="utf-8")
-            r.foto = f"{base}.png"
+                texto = pagina.inner_text("body", timeout=10_000)
+                r.status, r.milhas = classificar(texto, [d for _, d in respostas])
         except Exception as e:  # site fora do ar, tempo esgotado, layout diferente...
             r.status = "erro"
             print(f"  [milhas] {r.nome}: {type(e).__name__}: {str(e)[:150]}")
         finally:
+            # Guarda o que o robô viu, para conferir e calibrar a leitura.
+            try:
+                SAIDA.mkdir(parents=True, exist_ok=True)
+                base = SAIDA / re.sub(r"[^\w-]+", "_", f"{r.programa}_{rotulo}")
+                pagina.screenshot(path=f"{base}.png")
+                r.foto = f"{base}.png"
+                base.with_suffix(".txt").write_text(f"{pagina.url}\n\n{texto}", encoding="utf-8")
+                with open(f"{base}.json", "w", encoding="utf-8") as f:
+                    json.dump([{"url": u, "dados": d} for u, d in respostas], f, ensure_ascii=False)
+            except Exception:
+                pass
             pagina.close()
         return r

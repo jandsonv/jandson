@@ -1,19 +1,19 @@
 {% extends "base.html" %}
-{% block titulo %}{{ origens|join(', ') }} → {{ b.destino }}{% endblock %}
+{% block titulo %}{{ origens|join(', ') }} {{ '⇄' if b.ida_volta else '→' }} {{ b.destino }}{% endblock %}
 {% block conteudo %}
 <p><a href="{{ url_for('inicio') }}">← Nova busca</a></p>
 <div class="cartao">
-  <h1>{{ origens|join(', ') }} → {{ b.nome_destino }} ({{ b.destino }})</h1>
+  <h1>{{ origens|join(', ') }} {{ '⇄' if b.ida_volta else '→' }} {{ b.nome_destino }} ({{ b.destino }})</h1>
   <p class="suave" id="situacao" role="status">Carregando…</p>
   <div id="destaque"></div>
 </div>
 <div class="cartao">
-  <h2>Melhor dia de cada mês</h2>
+  <h2>Dia mais barato de cada mês</h2>
   <div class="rolagem"><table>
-    <thead><tr><th>Mês</th><th>Saída</th><th>Melhor dia</th><th>Em dinheiro</th><th>Voo</th><th>Comprar</th>{% if b.com_milhas %}<th>Milhas nesse dia</th>{% endif %}</tr></thead>
+    <thead><tr><th>Mês</th><th>Trecho</th><th>Melhor dia</th><th>Em dinheiro</th><th>Voo</th><th>Comprar</th>{% if b.com_milhas %}<th>Milhas nesse dia</th>{% endif %}</tr></thead>
     <tbody id="linhas"></tbody>
   </table></div>
-  <p class="suave pequeno">Só ida, por pessoa. O preço em dinheiro vem de buscas recentes e pode ter mudado; confira no link. As milhas não incluem as taxas.</p>
+  <p class="suave pequeno">Preço por pessoa, por trecho. Com ✓, o preço foi lido no site da companhia nesta busca; sem ✓, vem do radar (cache de buscas recentes) e pode ter mudado. As milhas não incluem as taxas. Em verde: milhas valendo menos que o dinheiro, pelo valor do milheiro configurado.</p>
 </div>
 <script>
 const COM_MILHAS = {{ 'true' if b.com_milhas else 'false' }};
@@ -32,48 +32,81 @@ function chipMilhas(m, precoDinheiro){
     texto = m.nome + ": " + m.milhas.toLocaleString("pt-BR") + (m.reais ? " ≈ " + rs(m.reais) : "");
     if (m.reais && m.reais < precoDinheiro) c.classList.add("bom");
   } else if (m.status === "sem_voo") texto = m.nome + ": sem voo";
-  else if (m.status === "bloqueado") texto = m.nome + ": abrir para conferir";
-  else if (m.status === "nao_consultado") texto = m.nome + ": aguardando";
+  else if (m.status === "bloqueado") texto = m.nome + ": o site barrou, abrir";
+  else if (m.status === "nao_consultado") texto = m.nome + ": na fila";
+  else if (m.status === "so_link") texto = m.nome + ": abrir busca";
   else texto = m.nome + ": não li, abrir";
   c.appendChild(link(m.link, texto));
   return c;
 }
 
+function normalizar(d){
+  d.resultados.forEach(r => { r.trecho ||= "ida"; r.de ||= r.origem; r.para ||= d.destino; });
+}
+
+function melhorCombinacao(d){
+  const idas = d.resultados.filter(r => r.trecho === "ida"), voltas = d.resultados.filter(r => r.trecho === "volta");
+  let melhor = null;
+  idas.forEach(i => voltas.forEach(v => {
+    if (v.origem === i.origem && v.ida > i.ida && (!melhor || i.preco + v.preco < melhor.total))
+      melhor = { ida: i, volta: v, total: i.preco + v.preco };
+  }));
+  return melhor;
+}
+
 function desenhar(d){
+  normalizar(d);
   const corpo = document.getElementById("linhas"); corpo.replaceChildren();
-  const menor = d.resultados.length ? Math.min(...d.resultados.map(r => r.preco)) : null;
+  const menorPor = {};
+  d.resultados.forEach(r => { if (!(r.trecho in menorPor) || r.preco < menorPor[r.trecho]) menorPor[r.trecho] = r.preco; });
   const porMes = {}; d.resultados.forEach(r => (porMes[r.mes] ||= []).push(r));
   const colunas = COM_MILHAS ? 7 : 6;
+  const terminou = d.status === "pronto" || d.status === "erro";
   d.meses.forEach(mes => {
     const lista = porMes[mes] || [];
     if (!lista.length) {
       const tr = el("tr"); tr.appendChild(el("td", nomeMes(mes)));
-      const td = el("td", d.status === "pronto" || d.status === "erro" ? "Sem preço encontrado" : "Procurando…", "suave"); td.colSpan = colunas - 1;
+      const td = el("td", terminou ? "Sem preço encontrado" : "Procurando…", "suave"); td.colSpan = colunas - 1;
       tr.appendChild(td); corpo.appendChild(tr); return;
     }
     lista.forEach((r, i) => {
-      const tr = el("tr"); if (r.preco === menor) tr.className = "melhor";
+      const tr = el("tr"); if (r.preco === menorPor[r.trecho]) tr.className = "melhor";
       tr.appendChild(el("td", i === 0 ? nomeMes(mes) : ""));
-      tr.appendChild(el("td", (d.nomes[r.origem] || r.origem) + " (" + r.origem + ")"));
+      const tdT = el("td"); tdT.appendChild(el("strong", r.trecho === "volta" ? "Volta" : "Ida"));
+      tdT.appendChild(el("div", (d.nomes[r.de] || r.de) + " → " + (d.nomes[r.para] || r.para), "pequeno suave"));
+      tr.appendChild(tdT);
       tr.appendChild(el("td", dataBR(r.ida), "num"));
-      tr.appendChild(el("td", rs(r.preco), "preco num"));
+      const tdP = el("td"); tdP.appendChild(el("div", rs(r.preco), "preco num"));
+      if (r.conferido) tdP.appendChild(el("div", "✓ " + r.conferido + (r.preco_radar && Math.round(r.preco_radar) !== Math.round(r.preco) && !r.conferido.includes("indicava") ? " (radar: " + rs(r.preco_radar) + ")" : ""), "pequeno suave"));
+      else if (terminou) tdP.appendChild(el("div", "preço do radar, não conferido", "pequeno suave"));
+      tr.appendChild(tdP);
       const voo = [r.voo || r.nome_cia, r.hora ? "às " + r.hora : "", r.conexoes ? r.conexoes + " conexão(ões)" : "direto"].filter(Boolean).join(" · ");
       tr.appendChild(el("td", voo));
       const comprar = el("td");
       if (r.link_cia) comprar.appendChild(link(r.link_cia, "Site da " + r.nome_cia, "botao fino"));
-      comprar.appendChild(document.createTextNode(" "));
       comprar.appendChild(link(r.link_google, "Google Voos", "botao fino borda"));
       tr.appendChild(comprar);
       if (COM_MILHAS) { const td = el("td"); r.milhas.forEach(m => td.appendChild(chipMilhas(m, r.preco))); tr.appendChild(td); }
       corpo.appendChild(tr);
     });
   });
+
   const dest = document.getElementById("destaque"); dest.replaceChildren();
-  if (menor != null) {
-    const r = d.resultados.find(x => x.preco === menor);
-    const p = el("p"); p.appendChild(el("span", "Melhor preço do período: "));
+  const frase = (rotulo, r) => {
+    const p = el("p"); p.appendChild(el("span", rotulo));
     p.appendChild(el("strong", rs(r.preco) + " em " + dataBR(r.ida)));
-    p.appendChild(el("span", ", saindo de " + (d.nomes[r.origem] || r.origem) + (r.nome_cia ? ", pela " + r.nome_cia : "") + "."));
+    p.appendChild(el("span", ", " + (d.nomes[r.de] || r.de) + " → " + (d.nomes[r.para] || r.para) + (r.nome_cia ? ", pela " + r.nome_cia : "") + "."));
+    return p;
+  };
+  ["ida", "volta"].forEach(t => {
+    const r = d.resultados.find(x => x.trecho === t && x.preco === menorPor[t]);
+    if (r) dest.appendChild(frase(t === "ida" ? "Ida mais barata: " : "Volta mais barata: ", r));
+  });
+  const combo = d.ida_volta && melhorCombinacao(d);
+  if (combo) {
+    const p = el("p"); p.appendChild(el("span", "Melhor ida e volta (mesma cidade, volta depois da ida): "));
+    p.appendChild(el("strong", rs(combo.total)));
+    p.appendChild(el("span", " — ida " + dataBR(combo.ida.ida) + ", volta " + dataBR(combo.volta.ida) + ", saindo de " + (d.nomes[combo.ida.origem] || combo.ida.origem) + "."));
     dest.appendChild(p);
   }
   const s = document.getElementById("situacao");

@@ -106,6 +106,16 @@ def cmd_telegram_id(args) -> int:
     return 0
 
 
+def cmd_entrar_milhas(args) -> int:
+    """Abre a janela do robô nos sites de milhas para você entrar na conta uma vez."""
+    cfg_m = carregar_config().get("milhas", {})
+    links = [v for k, v in (cfg_m.get("login") or {}).items() if k in cfg_m.get("programas", [])]
+    with mod_milhas.Navegador(dict(cfg_m, navegador_oculto=False), args.chromium) as nav:
+        nav.abrir_para_login(links)
+    print("Pronto. O robô vai usar essas sessões nas próximas consultas.")
+    return 0
+
+
 def cmd_app(args) -> int:
     from .web import conectar, criar_app
 
@@ -176,6 +186,10 @@ def main(argv=None) -> int:
     u.add_argument("nome")
     u.add_argument("--senha", help=argparse.SUPPRESS)
     u.set_defaults(f=cmd_criar_usuario)
+
+    e = sub.add_parser("entrar-milhas", help="abre os sites de milhas na janela do robô para você entrar na conta")
+    e.add_argument("--chromium", help=argparse.SUPPRESS)
+    e.set_defaults(f=cmd_entrar_milhas)
 
     args = ap.parse_args(argv)
     return args.f(args)

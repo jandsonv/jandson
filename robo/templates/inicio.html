@@ -10,13 +10,19 @@
       <span class="opcoes">{% for cod, nome in origens %}
         <label><input type="checkbox" name="origens" value="{{ cod }}" {{ 'checked' if cod in form.origens }}> {{ nome }} ({{ cod }})</label>{% endfor %}
       </span></p>
+    <p><label>Viagem</label>
+      <span class="opcoes">
+        <label><input type="radio" name="tipo" value="ida_volta" {{ 'checked' if form.ida_volta }}> Ida e volta</label>
+        <label><input type="radio" name="tipo" value="so_ida" {{ 'checked' if not form.ida_volta }}> Só ida</label>
+      </span></p>
     <div class="grade">
       <p><label for="destino">Indo para</label><input type="text" id="destino" name="destino" value="{{ form.destino }}" placeholder="Cidade ou código, ex.: São Paulo ou GRU" required></p>
       <p><label for="inicio">De</label><input type="month" id="inicio" name="inicio" value="{{ form.inicio }}" required></p>
       <p><label for="fim">Até</label><input type="month" id="fim" name="fim" value="{{ form.fim }}" required></p>
     </div>
-    {% if milhas_ativo %}<p class="opcoes"><label><input type="checkbox" name="milhas" value="1" {{ 'checked' if form.milhas }}> Conferir milhas (Smiles, LATAM Pass e Azul) no melhor dia de cada mês</label></p>{% endif %}
-    <p class="suave pequeno">Até {{ max_meses }} meses por busca. Com milhas, cada mês leva alguns minutos, porque o robô consulta os sites devagar.</p>
+    {% if milhas_ativo %}<p class="opcoes"><label><input type="checkbox" name="milhas" value="1" {{ 'checked' if form.milhas }}> Conferir milhas (Smiles, LATAM Pass e Azul) no dia mais barato de cada mês</label></p>{% endif %}
+    <p class="opcoes"><label><input type="checkbox" name="varredura" value="1" {{ 'checked' if form.varredura }}> Varredura completa nos sites das companhias (mais precisa, bem mais lenta: use para 1 ou 2 meses)</label></p>
+    <p class="suave pequeno">Até {{ max_meses }} meses por busca. Com milhas, cada mês leva alguns minutos por trecho, porque o robô consulta os sites devagar. A janela do Chrome que abrir é o robô trabalhando: não feche.</p>
     <button>Procurar</button>
   </form>
 </div>
@@ -27,7 +33,7 @@
     <tr><th>Rota</th><th>Período</th><th>Menor preço</th><th>Situação</th><th></th></tr>
     {% for b in buscas %}{% set ms = json.loads(b.meses) %}
     <tr>
-      <td>{{ json.loads(b.origens)|join(', ') }} → {{ b.nome_destino }} ({{ b.destino }})</td>
+      <td>{{ json.loads(b.origens)|join(', ') }} {{ '⇄' if b.ida_volta else '→' }} {{ b.nome_destino }} ({{ b.destino }})</td>
       <td class="num">{{ ms[0][5:] }}/{{ ms[0][:4] }} a {{ ms[-1][5:] }}/{{ ms[-1][:4] }}</td>
       <td class="num">{% if b.menor %}R$ {{ '{:,.0f}'.format(b.menor).replace(',', '.') }}{% else %}—{% endif %}</td>
       <td>{{ {'na_fila':'Na fila','rodando':'Procurando…','pronto':'Pronta','erro':'Com erro'}[b.status] }}</td>

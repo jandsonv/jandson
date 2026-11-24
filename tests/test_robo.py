@@ -165,3 +165,97 @@ def test_app_exige_login_e_isola_buscas(tmp_path):
     with outro.session_transaction() as s:
         s["usuario"] = "beto"
     assert outro.get("/api/busca/1").status_code == 404
+
+
+GOL_TEXTO = """Ida: Salvador a São Paulo Sáb, 26 Dez 2026
+Qua, 23 Dez
+A partir de BRL 567,52
+Qui, 24 Dez
+A partir de BRL 390,52
+Sex, 25 Dez
+A partir de BRL 390,52
+Sáb, 26 Dez
+A partir de BRL 436,52
+Dom, 27 Dez
+A partir de BRL 567,52
+Seg, 28 Dez
+A partir de BRL 567,52
+Ter, 29 Dez
+A partir de BRL 1.390,52
+03:40 SSA Salvador 06:15 CGH A partir de BRL 436,52 por viajante"""
+
+
+def test_le_calendario_da_gol():
+    dias = milhas.ler_calendario(GOL_TEXTO, date(2026, 12, 26))
+    assert dias[date(2026, 12, 25)] == 390.52 and dias[date(2026, 12, 26)] == 436.52
+    assert dias[date(2026, 12, 29)] == 1390.52 and len(dias) == 7
+    virada = milhas.ler_calendario("Qui, 31 Dez\nBRL 500,00\nSex, 1 Jan\nBRL 450,00", date(2026, 12, 31))
+    assert virada == {date(2026, 12, 31): 500.0, date(2027, 1, 1): 450.0}
+
+
+class NavFalso:
+    """Simula o site da companhia: cada dia custa 500, exceto os dias especiais."""
+    especiais = {date(2027, 3, 9): 390.0, date(2027, 3, 27): 300.0}
+
+    def __init__(self, *a, **k):
+        self.abertos = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        pass
+
+    def ler_site_cia(self, link, ref, rotulo=""):
+        self.abertos.append(ref)
+        from datetime import timedelta
+        dias = [ref + timedelta(days=i) for i in range(-3, 4)]
+        return {d: self.especiais.get(d, 500.0) for d in dias}
+
+    def consultar(self, r, rotulo=""):
+        r.status, r.milhas = "ok", 10000
+        return r
+
+
+def _app_com_busca(tmp_path, monkeypatch, varredura):
+    import json as _json
+    from robo import web
+    monkeypatch.setattr(web.mod_milhas, "Navegador", NavFalso)
+    monkeypatch.setattr(web.time, "sleep", lambda s: None)
+    monkeypatch.setattr(web.random, "uniform", lambda a, b: 0)
+    r = Radar("x", CFG)
+    r.cidades._mapa = {}
+    r.melhor_do_mes = lambda de, para, mes: (
+        Oferta(de, para, date(2027, 3, 10), None, 410.0, cia="G3", voo="G31", hora_ida="05:20") if mes == "2027-03" else None)
+    cfg = dict(CFG, companhias={"G3": {"nome": "GOL", "link": "https://gol/?d={ida}&o={origem}"}},
+               milhas={"ativo": True, "programas": ["smiles"], "valor_milheiro": {"smiles": 16},
+                       "links": {"smiles": {"so_ida": "https://s/{ida}"}}})
+    db = tmp_path / "a.db"
+    ex = web.Executor(cfg, db, fabrica_radar=lambda: r)
+    with web.closing(web.conectar(db)) as c, c:
+        c.execute("INSERT INTO buscas(usuario,origens,destino,nome_destino,meses,com_milhas,status,ida_volta,varredura) "
+                  "VALUES('a',?,?,?,?,1,'na_fila',1,?)", (_json.dumps(["AJU"]), "GRU", "SP", _json.dumps(["2027-03", "2027-04"]), varredura))
+    ex.executar(1)
+    with web.closing(web.conectar(db)) as c:
+        return [dict(x) for x in c.execute("SELECT * FROM resultados ORDER BY trecho")], \
+            c.execute("SELECT status FROM buscas").fetchone()[0]
+
+
+def test_confere_no_site_e_troca_pelo_dia_vizinho_mais_barato(tmp_path, monkeypatch):
+    linhas, status = _app_com_busca(tmp_path, monkeypatch, 0)
+    assert status == "pronto" and [l["trecho"] for l in linhas] == ["ida", "volta"]
+    ida = linhas[0]
+    assert (ida["ida"], ida["preco"], ida["preco_radar"]) == ("2027-03-09", 390.0, 410.0)
+    assert "indicava 10/03" in ida["conferido"] and ida["link_cia"] == "https://gol/?d=2027-03-09&o=AJU"
+    assert linhas[1]["de"] == "GRU" and linhas[1]["para"] == "AJU"
+    m = __import__("json").loads(ida["milhas"])
+    assert m[0]["milhas"] == 10000 and m[0]["link"] == "https://s/2027-03-09" and m[0]["reais"] == 160
+
+
+def test_varredura_acha_dia_fora_do_alcance_do_radar(tmp_path, monkeypatch):
+    linhas, status = _app_com_busca(tmp_path, monkeypatch, 1)
+    assert status == "pronto"
+    marco = [l for l in linhas if l["mes"] == "2027-03" and l["trecho"] == "ida"][0]
+    assert (marco["ida"], marco["preco"]) == ("2027-03-27", 300.0) and "varredura" in marco["conferido"]
+    abril = [l for l in linhas if l["mes"] == "2027-04"]
+    assert len(abril) == 2 and all(l["preco"] == 500.0 for l in abril)  # o radar não tinha abril

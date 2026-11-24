@@ -13,6 +13,17 @@ abrir.bat
 
 O programa roda no seu computador e abre em `http://localhost:8000`. As buscas ficam guardadas em "Buscas anteriores". Para acessar do celular na mesma rede Wi-Fi: `.venv\Scripts\python -m robo app --rede`.
 
+Como a busca funciona:
+
+1. **Radar** (segundos): o Travelpayouts aponta o dia mais barato de cada mês, na ida e na volta. São preços em cache, de buscas recentes de outras pessoas.
+2. **Conferência no site da companhia**: o robô abre o site (GOL, LATAM ou Azul) nesse dia, lê o preço real e os 3 dias de cada lado, e troca pelo mais barato do mesmo mês. Preços conferidos aparecem com ✓.
+3. **Milhas**: no dia final de cada mês e trecho, consulta Smiles, LATAM Pass e Azul.
+4. **Varredura completa** (opcional, lenta): percorre o mês inteiro no site de cada companhia, sem depender do cache. Use para 1 ou 2 meses.
+
+Se algum programa de milhas pedir login, dê dois cliques em **Radar - entrar nas milhas** na Mesa (com o programa fechado), entre na conta nas abas que abrirem e feche a janela. O robô passa a usar essa sessão. Ele nunca guarda a sua senha.
+
+Tudo que o robô vê fica em `~/RadarPassagens/saida` (print, texto e dados de cada página), para conferir e calibrar a leitura.
+
 **2. Alertas automáticos no Telegram (opcional, já pronto).** O comando `rodar` vigia os preços sozinho e avisa quando aparece promoção. Veja mais abaixo.
 
 ## Como funcionam os alertas automáticos

@@ -49,13 +49,18 @@ milhas:
   valor_milheiro: {smiles: 16, latam_pass: 25, azul: 15}
   # Ritmo de formiguinha: poucas consultas, com pausa entre elas.
   max_consultas_por_rodada: 9
-  pausa_segundos: {minimo: 25, maximo: 70}
+  pausa_segundos: {minimo: 12, maximo: 35}
   espera_resultado_segundos: 45
   # true = janela escondida. Deixe false: os sites barram mais o modo escondido.
   navegador_oculto: false
   # Modelos de link de busca de cada programa. Se um site mudar, é só ajustar aqui.
   # Campos: {origem} {destino} {ida} {volta} (AAAA-MM-DD), {ida_ms} {volta_ms}
   # (milissegundos), {ida_mdy} {volta_mdy} (MM/DD/AAAA).
+  # Páginas de login de cada programa (comando "entrar-milhas").
+  login:
+    smiles: "https://www.smiles.com.br/login"
+    latam_pass: "https://www.latamairlines.com/br/pt/minha-conta"
+    azul: "https://www.voeazul.com.br/br/pt/home/login"
   links:
     smiles:
       so_ida: "https://www.smiles.com.br/mfe/emissao-passagem/?adults=1&cabin=ALL&children=0&departureDate={ida_ms}&infants=0&isElegible=false&isFlexibleDateChecked=false&returnDate=&searchType=g3&segments=1&tripType=2&originAirport={origem}&originCity=&originCountry=&originAirportIsAny=false&destinationAirport={destino}&destinCity=&destinCountry=&destinAirportIsAny=false&novo-resultado-voos=true"
@@ -97,3 +102,7 @@ companhias:
   G3:
     nome: GOL
     link: "https://b2c.voegol.com.br/compra/busca-parceiros?pv=br&tipo=DF&de={origem}&para={destino}&ida={ida_dmy}&ADT=1&CHD=0&INF=0"
+
+# Depois do radar, abre o site da companhia no dia mais barato de cada mês para
+# pegar o preço real e conferir os dias vizinhos (o radar usa preços em cache).
+conferir_no_site: true
