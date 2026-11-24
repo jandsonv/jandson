@@ -24,6 +24,29 @@ O programa roda no seu computador e abre em `http://localhost:8000`. As buscas f
 
 Se um site de milhas pedir verificação ou mudar de layout, o robô não tenta burlar: o alerta sai do mesmo jeito, com o link da busca pronto para você abrir.
 
+## Instalação (Mac)
+
+1. Instale o Python pelo [python.org/downloads](https://www.python.org/downloads/) (o instalador para macOS). O Google Chrome é recomendado; sem ele, o instalador baixa um navegador próprio.
+2. Baixe este repositório (botão **Code → Download ZIP** no GitHub) e descompacte, por exemplo, na pasta Documentos.
+3. Abra o **Terminal**, digite `cd ` (com espaço), arraste a pasta para dentro do Terminal e aperte Enter. Depois:
+
+   ```
+   bash instalar-mac.command
+   open -e .env
+   ```
+
+   No `.env`, cole o token do Travelpayouts depois de `TRAVELPAYOUTS_TOKEN=` e salve.
+4. Crie seu usuário e abra o programa:
+
+   ```
+   .venv/bin/python -m robo criar-usuario seunome
+   ./abrir-mac.command
+   ```
+
+   O navegador abre em `http://localhost:8000`. Para fechar, aperte Ctrl+C no Terminal. Das próximas vezes, basta o passo `./abrir-mac.command` dentro da pasta.
+
+Na primeira consulta de milhas, o macOS pode pedir permissão para o Terminal controlar o navegador; aceite.
+
 ## Instalação (Windows)
 
 1. Instale o [Python](https://www.python.org/downloads/) marcando **Add Python to PATH**, e tenha o Google Chrome instalado.

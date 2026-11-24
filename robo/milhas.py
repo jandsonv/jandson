@@ -118,11 +118,21 @@ class Navegador:
                 executable_path=self.caminho_chromium, **opcoes
             )
         else:
-            try:
-                self._ctx = self._pw.chromium.launch_persistent_context(channel="chrome", **opcoes)
-            except Exception:
-                # Sem Google Chrome instalado: tenta o Edge, que vem no Windows.
-                self._ctx = self._pw.chromium.launch_persistent_context(channel="msedge", **opcoes)
+            # Google Chrome; senão o Edge (vem no Windows); senão o Chromium do Playwright
+            # (instalado por "python -m playwright install chromium").
+            ultimo_erro = None
+            for canal in ("chrome", "msedge", None):
+                try:
+                    extra = {"channel": canal} if canal else {}
+                    self._ctx = self._pw.chromium.launch_persistent_context(**extra, **opcoes)
+                    break
+                except Exception as e:
+                    ultimo_erro = e
+            else:
+                raise RuntimeError(
+                    "Nenhum navegador encontrado. Instale o Google Chrome ou rode: "
+                    "python -m playwright install chromium"
+                ) from ultimo_erro
         return self
 
     def __exit__(self, *exc):
