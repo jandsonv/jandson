@@ -146,10 +146,28 @@ def ler_calendario(texto: str, referencia: date) -> dict[date, float]:
 _RE_PRECO = re.compile(r"(?:R\$|BRL)\s*(\d{1,3}(?:\.\d{3})*,\d{2})", re.I)
 
 
+_RE_ANTES_TARIFA = re.compile(r"(partir de|por pessoa|por viajante|total|light|classic|premium|economy|"
+                              r"basic|standard|plus|top|tarifa)[^\d]{0,40}$", re.I)
+_RE_DEPOIS_TARIFA = re.compile(r"^[^\d]{0,25}(por viajante|por pessoa|por adulto)", re.I)
+_RE_EXTRA = re.compile(r"(apenas|mais|adicional|desconto|economize|cupom|ganhe|taxa de|bagagem)[^\d]{0,25}$|"
+                       r"^\s*(a mais|de desconto|adiciona|por trecho a mais)", re.I)
+
+
 def menor_preco_pagina(texto: str) -> float | None:
-    """Menor preço em reais na página de resultados de um dia (ex.: 'Por pessoa a partir de BRL 459,94')."""
-    valores = [float(m.group(1).replace(".", "").replace(",", ".")) for m in _RE_PRECO.finditer(texto)]
-    valores = [v for v in valores if v >= 50]
+    """Menor tarifa em reais na página de resultados de um dia (ex.: 'Por pessoa a partir de BRL 459,94').
+
+    Só conta valores com cara de tarifa e ignora ofertas como 'apenas BRL 119,00 a mais'.
+    """
+    valores = []
+    for m in _RE_PRECO.finditer(texto):
+        antes, depois = texto[max(0, m.start() - 45):m.start()], texto[m.end():m.end() + 30]
+        if _RE_EXTRA.search(antes) or _RE_EXTRA.search(depois):
+            continue
+        if not (_RE_ANTES_TARIFA.search(antes) or _RE_DEPOIS_TARIFA.search(depois)):
+            continue
+        v = float(m.group(1).replace(".", "").replace(",", "."))
+        if v >= 50:
+            valores.append(v)
     return min(valores) if valores else None
 
 

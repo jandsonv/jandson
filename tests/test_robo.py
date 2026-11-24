@@ -325,3 +325,12 @@ def test_le_lista_de_voos_da_latam():
     assert milhas.menor_preco_pagina(texto) == 459.94
     assert milhas.ler_calendario(texto, date(2026, 12, 25)) == {}
     assert milhas.menor_preco_pagina("Ganhe R$ 10,00 de desconto") is None
+
+
+def test_resumo_da_gol_ignora_oferta_de_upgrade():
+    texto = """Resumo da viagem Ida: Salvador a São Paulo Sex, 25 Dez 2026 Editar seleção
+    09:55 SSA Direto 2h 30min 12:25 GRU Operado por GOL Light BRL 390,52 por viajante
+    Última chance! Voe com mais flexibilidade por apenas BRL 119,00 a mais por passageiro. Mudar para Classic
+    Sem surpresas! Todos os impostos estão incluídos no preço total. Total da sua reserva: BRL 390,52"""
+    assert milhas.menor_preco_pagina(texto) == 390.52
+    assert milhas.menor_preco_pagina("Bagagem extra por BRL 89,90") is None
