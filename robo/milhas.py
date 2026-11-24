@@ -143,6 +143,16 @@ def ler_calendario(texto: str, referencia: date) -> dict[date, float]:
     return dias
 
 
+_RE_PRECO = re.compile(r"(?:R\$|BRL)\s*(\d{1,3}(?:\.\d{3})*,\d{2})", re.I)
+
+
+def menor_preco_pagina(texto: str) -> float | None:
+    """Menor preço em reais na página de resultados de um dia (ex.: 'Por pessoa a partir de BRL 459,94')."""
+    valores = [float(m.group(1).replace(".", "").replace(",", ".")) for m in _RE_PRECO.finditer(texto)]
+    valores = [v for v in valores if v >= 50]
+    return min(valores) if valores else None
+
+
 def classificar(texto: str, dados_json: list | None = None) -> tuple[str, int | None]:
     valores = [n for d in (dados_json or []) for n in extrair_milhas_json(d)]
     if valores:

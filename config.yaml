@@ -66,8 +66,8 @@ milhas:
       so_ida: "https://www.smiles.com.br/mfe/emissao-passagem/?adults=1&cabin=ALL&children=0&departureDate={ida_ms}&infants=0&isElegible=false&isFlexibleDateChecked=false&returnDate=&searchType=g3&segments=1&tripType=2&originAirport={origem}&originCity=&originCountry=&originAirportIsAny=false&destinationAirport={destino}&destinCity=&destinCountry=&destinAirportIsAny=false&novo-resultado-voos=true"
       ida_e_volta: "https://www.smiles.com.br/mfe/emissao-passagem/?adults=1&cabin=ALL&children=0&departureDate={ida_ms}&infants=0&isElegible=false&isFlexibleDateChecked=false&returnDate={volta_ms}&searchType=g3&segments=1&tripType=1&originAirport={origem}&originCity=&originCountry=&originAirportIsAny=false&destinationAirport={destino}&destinCity=&destinCountry=&destinAirportIsAny=false&novo-resultado-voos=true"
     latam_pass:
-      so_ida: "https://www.latamairlines.com/br/pt/oferta-voos?origin={origem}&outbound={ida}T12%3A00%3A00.000Z&destination={destino}&inbound=null&adt=1&chd=0&inf=0&trip=OW&cabin=Economy&redemption=true&sort=RECOMMENDED"
-      ida_e_volta: "https://www.latamairlines.com/br/pt/oferta-voos?origin={origem}&outbound={ida}T12%3A00%3A00.000Z&destination={destino}&inbound={volta}T12%3A00%3A00.000Z&adt=1&chd=0&inf=0&trip=RT&cabin=Economy&redemption=true&sort=RECOMMENDED"
+      so_ida: "https://www.latamairlines.com/br/pt/oferta-voos?origin={origem}&outbound={ida}T00%3A00%3A00.000Z&destination={destino}&inbound=null&adt=1&chd=0&inf=0&trip=OW&cabin=Economy&redemption=true&sort=RECOMMENDED"
+      ida_e_volta: "https://www.latamairlines.com/br/pt/oferta-voos?origin={origem}&outbound={ida}T00%3A00%3A00.000Z&destination={destino}&inbound={volta}T00%3A00%3A00.000Z&adt=1&chd=0&inf=0&trip=RT&cabin=Economy&redemption=true&sort=RECOMMENDED"
     azul:
       so_ida: "https://www.voeazul.com.br/br/pt/home/selecao-voo?c[0].ds={origem}&c[0].std={ida_mdy}&c[0].as={destino}&p[0].t=ADT&p[0].c=1&p[0].cp=false&f.dl=3&f.dr=3&cc=PTS"
       ida_e_volta: "https://www.voeazul.com.br/br/pt/home/selecao-voo?c[0].ds={origem}&c[0].std={ida_mdy}&c[0].as={destino}&c[1].ds={destino}&c[1].std={volta_mdy}&c[1].as={origem}&p[0].t=ADT&p[0].c=1&p[0].cp=false&f.dl=3&f.dr=3&cc=PTS"
@@ -95,7 +95,7 @@ promocoes:
 companhias:
   LA:
     nome: LATAM
-    link: "https://www.latamairlines.com/br/pt/oferta-voos?origin={origem}&outbound={ida}T12%3A00%3A00.000Z&destination={destino}&inbound=null&adt=1&chd=0&inf=0&trip=OW&cabin=Economy&redemption=false&sort=RECOMMENDED"
+    link: "https://www.latamairlines.com/br/pt/oferta-voos?origin={origem}&outbound={ida}T00%3A00%3A00.000Z&destination={destino}&inbound=null&adt=1&chd=0&inf=0&trip=OW&cabin=Economy&redemption=false&sort=RECOMMENDED"
   AD:
     nome: Azul
     link: "https://www.voeazul.com.br/br/pt/home/selecao-voo?c[0].ds={origem}&c[0].std={ida_mdy}&c[0].as={destino}&p[0].t=ADT&p[0].c=1&p[0].cp=false&f.dl=3&f.dr=3&cc=BRL"

@@ -503,7 +503,11 @@ def criar_app(cfg: dict, caminho_db=None, chromium: str | None = None, fabrica_r
         dias = {d: v for d, v in mod_milhas.ler_calendario(texto, ref).items()
                 if d.strftime("%Y-%m") == r["mes"] and d >= date.today()}
         if not dias:
-            return dict(lido=False, mensagem="Ainda não encontrei os preços nesta página.")
+            # Sites sem a faixa de dias vizinhos (ex.: LATAM): lê o menor preço da lista de voos do dia.
+            preco = mod_milhas.menor_preco_pagina(texto)
+            if preco is None:
+                return dict(lido=False, mensagem="Ainda não encontrei os preços nesta página.")
+            dias = {ref: preco}
         melhor = min(dias, key=dias.get)
         info = (cfg.get("companhias") or {}).get(r["cia"]) or {}
         nome = info.get("nome") or r["nome_cia"] or r["cia"]

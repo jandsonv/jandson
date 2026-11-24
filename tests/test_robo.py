@@ -316,3 +316,12 @@ def test_chave_site():
     assert chave_site("https://www.latamairlines.com/br/pt") == "latam"
     assert chave_site("https://voeazul.com.br/x") == "azul"
     assert chave_site("https://smiles.com.br.golpe.net/") is None
+
+
+def test_le_lista_de_voos_da_latam():
+    texto = """Escolha um voo de ida  Recomendado Mais econômico 10:45 AJU Duração 2 h 50 min. 13:35 GRU
+    Por pessoa a partir de BRL 459,94 Inclui taxas e impostos  Comece a acumular milhas
+    3:30 AJU 6:25 GRU Por pessoa a partir de BRL 459,94   Por pessoa a partir de BRL 968,85"""
+    assert milhas.menor_preco_pagina(texto) == 459.94
+    assert milhas.ler_calendario(texto, date(2026, 12, 25)) == {}
+    assert milhas.menor_preco_pagina("Ganhe R$ 10,00 de desconto") is None
