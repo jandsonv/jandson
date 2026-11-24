@@ -116,3 +116,52 @@ def test_mensagem():
     assert "Aracaju (AJU) → São Paulo (GRU)" in t and "R$ 300" in t and "G31234 às 06:10" in t
     assert "9.800" in t and "≈ R$ 157" in t and "a=1&amp;b=2" in t
     assert "pediu verificação" in t and "Compensa mais em milhas" in t
+
+
+def test_meses_e_resolucao_de_cidade():
+    from robo.radar import Cidades
+    from robo.web import lista_meses
+    assert lista_meses("2026-11", "2027-02") == ["2026-11", "2026-12", "2027-01", "2027-02"]
+    assert lista_meses("2027-03", "2027-01") == []
+    assert len(lista_meses("2027-01", "2030-01")) == 12
+    c = Cidades()
+    c._mapa = {"SAO": {"nome": "São Paulo", "pais": "BR"}, "SSA": {"nome": "Salvador", "pais": "BR"},
+               "SAL": {"nome": "San Salvador", "pais": "SV"}, "LIS": {"nome": "Lisboa", "pais": "PT"}}
+    assert c.resolver("sao paulo") == "SAO" and c.resolver("lis") == "LIS" and c.resolver("Lisb") == "LIS"
+    assert c.resolver("Salvador") == "SSA" and c.resolver("Atlântida") is None
+
+
+def test_melhor_do_mes_ignora_outro_mes_e_conexoes_demais():
+    r = Radar("x", CFG)
+    r.cidades._mapa = {}
+    r._v3 = lambda *a, **k: [
+        {"price": 100, "departure_at": "2027-02-03T08:00:00-03:00", "transfers": 4, "airline": "G3"},
+        {"price": 90, "departure_at": "2027-03-01T08:00:00-03:00", "transfers": 0},
+        {"price": 300, "departure_at": "2027-02-14T06:15:00-03:00", "transfers": 0, "airline": "AD", "flight_number": 4100},
+        {"price": 350, "departure_at": "2027-02-20T06:15:00-03:00", "transfers": 0},
+    ]
+    o = r.melhor_do_mes("AJU", "GRU", "2027-02", hoje=date(2027, 1, 1))
+    assert (o.ida, o.preco, o.voo, o.hora_ida) == (date(2027, 2, 14), 300, "AD4100", "06:15")
+
+
+def test_app_exige_login_e_isola_buscas(tmp_path):
+    from robo.web import criar_app, criar_usuario
+    criar_usuario(tmp_path / "a.db", "Ana", "segredo123")
+    r = Radar("x", CFG)
+    r.cidades._mapa = {"GRU": {"nome": "São Paulo", "pais": "BR"}}
+    app = criar_app(dict(CFG, milhas={"ativo": False}), tmp_path / "a.db", fabrica_radar=lambda: r)
+    app.executor.enfileirar = lambda i: None
+    c = app.test_client()
+    assert c.get("/").status_code == 302 and c.get("/api/busca/1").status_code == 401
+    assert c.post("/login", data={"usuario": "ana", "senha": "segredo123"}).status_code == 400  # sem csrf
+    with c.session_transaction() as s:
+        s["csrf"] = "t"
+    assert c.post("/login", data={"usuario": "ANA", "senha": "segredo123", "csrf": "t"}).status_code == 302
+    with c.session_transaction() as s:
+        s["csrf"] = "t"
+    resp = c.post("/buscar", data={"origens": "AJU", "destino": "GRU", "inicio": "2027-01", "fim": "2027-02", "csrf": "t"})
+    assert resp.status_code == 302 and c.get("/api/busca/1").json["meses"] == ["2027-01", "2027-02"]
+    outro = app.test_client()
+    with outro.session_transaction() as s:
+        s["usuario"] = "beto"
+    assert outro.get("/api/busca/1").status_code == 404

@@ -81,3 +81,19 @@ promocoes:
   palavras_titulo: [passagem, passagens, milhas, pontos, voe, voos, trecho, trechos, tarifa]
   # Avisa também bônus de transferência de pontos para os seus programas.
   bonus_transferencia: true
+
+# ---------------------------------------------------------------
+# Links direto para o site da companhia (compra em dinheiro), pelo
+# código da companhia. Campos: os mesmos dos links de milhas, mais
+# {ida_dmy} (DD-MM-AAAA). Sem modelo para a companhia, vai o Google Voos.
+# ---------------------------------------------------------------
+companhias:
+  LA:
+    nome: LATAM
+    link: "https://www.latamairlines.com/br/pt/oferta-voos?origin={origem}&outbound={ida}T12%3A00%3A00.000Z&destination={destino}&inbound=null&adt=1&chd=0&inf=0&trip=OW&cabin=Economy&redemption=false&sort=RECOMMENDED"
+  AD:
+    nome: Azul
+    link: "https://www.voeazul.com.br/br/pt/home/selecao-voo?c[0].ds={origem}&c[0].std={ida_mdy}&c[0].as={destino}&p[0].t=ADT&p[0].c=1&p[0].cp=false&f.dl=3&f.dr=3&cc=BRL"
+  G3:
+    nome: GOL
+    link: "https://b2c.voegol.com.br/compra/busca-parceiros?pv=br&tipo=DF&de={origem}&para={destino}&ida={ida_dmy}&ADT=1&CHD=0&INF=0"

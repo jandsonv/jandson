@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block titulo %}{{ origens|join(', ') }} → {{ b.destino }}{% endblock %}
+{% block conteudo %}
+<p><a href="{{ url_for('inicio') }}">← Nova busca</a></p>
+<div class="cartao">
+  <h1>{{ origens|join(', ') }} → {{ b.nome_destino }} ({{ b.destino }})</h1>
+  <p class="suave" id="situacao" role="status">Carregando…</p>
+  <div id="destaque"></div>
+</div>
+<div class="cartao">
+  <h2>Melhor dia de cada mês</h2>
+  <div class="rolagem"><table>
+    <thead><tr><th>Mês</th><th>Saída</th><th>Melhor dia</th><th>Em dinheiro</th><th>Voo</th><th>Comprar</th>{% if b.com_milhas %}<th>Milhas nesse dia</th>{% endif %}</tr></thead>
+    <tbody id="linhas"></tbody>
+  </table></div>
+  <p class="suave pequeno">Só ida, por pessoa. O preço em dinheiro vem de buscas recentes e pode ter mudado; confira no link. As milhas não incluem as taxas.</p>
+</div>
+<script>
+const COM_MILHAS = {{ 'true' if b.com_milhas else 'false' }};
+const MESES = ["janeiro","fevereiro","março","abril","maio","junho","julho","agosto","setembro","outubro","novembro","dezembro"];
+const DIAS = ["dom","seg","ter","qua","qui","sex","sáb"];
+const rs = v => "R$ " + Math.round(v).toLocaleString("pt-BR");
+const nomeMes = m => MESES[+m.slice(5) - 1] + " de " + m.slice(0, 4);
+function dataBR(iso){ const d = new Date(iso + "T12:00:00"); return d.toLocaleDateString("pt-BR") + " (" + DIAS[d.getDay()] + ")"; }
+function el(tag, texto, classe){ const e = document.createElement(tag); if (texto != null) e.textContent = texto; if (classe) e.className = classe; return e; }
+function link(href, texto, classe){ const a = el("a", texto, classe); a.href = href; a.target = "_blank"; a.rel = "noopener"; return a; }
+
+function chipMilhas(m, precoDinheiro){
+  const c = el("span", null, "chip");
+  let texto;
+  if (m.status === "ok" && m.milhas) {
+    texto = m.nome + ": " + m.milhas.toLocaleString("pt-BR") + (m.reais ? " ≈ " + rs(m.reais) : "");
+    if (m.reais && m.reais < precoDinheiro) c.classList.add("bom");
+  } else if (m.status === "sem_voo") texto = m.nome + ": sem voo";
+  else if (m.status === "bloqueado") texto = m.nome + ": abrir para conferir";
+  else if (m.status === "nao_consultado") texto = m.nome + ": aguardando";
+  else texto = m.nome + ": não li, abrir";
+  c.appendChild(link(m.link, texto));
+  return c;
+}
+
+function desenhar(d){
+  const corpo = document.getElementById("linhas"); corpo.replaceChildren();
+  const menor = d.resultados.length ? Math.min(...d.resultados.map(r => r.preco)) : null;
+  const porMes = {}; d.resultados.forEach(r => (porMes[r.mes] ||= []).push(r));
+  const colunas = COM_MILHAS ? 7 : 6;
+  d.meses.forEach(mes => {
+    const lista = porMes[mes] || [];
+    if (!lista.length) {
+      const tr = el("tr"); tr.appendChild(el("td", nomeMes(mes)));
+      const td = el("td", d.status === "pronto" || d.status === "erro" ? "Sem preço encontrado" : "Procurando…", "suave"); td.colSpan = colunas - 1;
+      tr.appendChild(td); corpo.appendChild(tr); return;
+    }
+    lista.forEach((r, i) => {
+      const tr = el("tr"); if (r.preco === menor) tr.className = "melhor";
+      tr.appendChild(el("td", i === 0 ? nomeMes(mes) : ""));
+      tr.appendChild(el("td", (d.nomes[r.origem] || r.origem) + " (" + r.origem + ")"));
+      tr.appendChild(el("td", dataBR(r.ida), "num"));
+      tr.appendChild(el("td", rs(r.preco), "preco num"));
+      const voo = [r.voo || r.nome_cia, r.hora ? "às " + r.hora : "", r.conexoes ? r.conexoes + " conexão(ões)" : "direto"].filter(Boolean).join(" · ");
+      tr.appendChild(el("td", voo));
+      const comprar = el("td");
+      if (r.link_cia) comprar.appendChild(link(r.link_cia, "Site da " + r.nome_cia, "botao fino"));
+      comprar.appendChild(document.createTextNode(" "));
+      comprar.appendChild(link(r.link_google, "Google Voos", "botao fino borda"));
+      tr.appendChild(comprar);
+      if (COM_MILHAS) { const td = el("td"); r.milhas.forEach(m => td.appendChild(chipMilhas(m, r.preco))); tr.appendChild(td); }
+      corpo.appendChild(tr);
+    });
+  });
+  const dest = document.getElementById("destaque"); dest.replaceChildren();
+  if (menor != null) {
+    const r = d.resultados.find(x => x.preco === menor);
+    const p = el("p"); p.appendChild(el("span", "Melhor preço do período: "));
+    p.appendChild(el("strong", rs(r.preco) + " em " + dataBR(r.ida)));
+    p.appendChild(el("span", ", saindo de " + (d.nomes[r.origem] || r.origem) + (r.nome_cia ? ", pela " + r.nome_cia : "") + "."));
+    dest.appendChild(p);
+  }
+  const s = document.getElementById("situacao");
+  s.textContent = d.status === "pronto" ? (d.progresso || "Busca concluída.") : d.status === "erro" ? "Erro: " + d.progresso : d.progresso || "Procurando…";
+  s.className = d.status === "erro" ? "erro" : "suave";
+}
+async function atualizar(){
+  try {
+    const r = await fetch("{{ url_for('api_busca', busca_id=b.id) }}");
+    if (r.status === 401) { location.href = "{{ url_for('login') }}"; return; }
+    const d = await r.json(); desenhar(d);
+    if (d.status === "pronto" || d.status === "erro") return;
+  } catch (e) {}
+  setTimeout(atualizar, 3000);
+}
+atualizar();
+</script>
+{% endblock %}

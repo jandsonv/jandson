@@ -76,6 +76,27 @@ class Cidades:
         self._mapa = json.loads(arq.read_text(encoding="utf-8"))
         return self._mapa
 
+    def resolver(self, texto: str) -> str | None:
+        """Aceita código IATA ('GRU') ou nome de cidade ('São Paulo') e devolve o código."""
+        import unicodedata
+
+        def norm(x: str) -> str:
+            return unicodedata.normalize("NFKD", x).encode("ascii", "ignore").decode().lower().strip()
+
+        t = texto.strip()
+        mapa = self._carregar()
+        if len(t) == 3 and t.isalpha() and (t.upper() in mapa or not mapa):
+            return t.upper()
+        alvo = norm(t)
+        if not alvo:
+            return None
+        exatos = [c for c, v in mapa.items() if norm(v["nome"]) == alvo]
+        if exatos:
+            # Entre cidades com o mesmo nome, prefere a brasileira.
+            return sorted(exatos, key=lambda c: mapa[c]["pais"] != "BR")[0]
+        comeca = [c for c, v in mapa.items() if norm(v["nome"]).startswith(alvo)]
+        return comeca[0] if len(comeca) == 1 else None
+
     def nome(self, codigo: str) -> str:
         return self._carregar().get(codigo, {}).get("nome", codigo)
 
@@ -163,26 +184,22 @@ class Radar:
         except (KeyError, TypeError, ValueError):
             return None
 
-    def detalhar(self, o: Oferta) -> None:
-        """Tenta descobrir companhia, número do voo e horário do mais barato naquela data."""
-        try:
-            params = dict(
-                origin=o.origem,
-                destination=o.destino,
-                departure_at=o.ida.isoformat(),
-                currency="brl",
-                one_way=str(o.volta is None).lower(),
-                sorting="price",
-                limit=5,
-            )
-            if o.volta:
-                params["return_at"] = o.volta.isoformat()
-            achados = self._get("/aviasales/v3/prices_for_dates", **params)
-        except (requests.RequestException, RuntimeError, ValueError):
-            return
-        if not achados:
-            return
-        m = min(achados, key=lambda x: x.get("price", 1e12))
+    def _v3(self, origem: str, destino: str, quando: str, volta: str | None = None, limite: int = 30) -> list[dict]:
+        params = dict(
+            origin=origem,
+            destination=destino,
+            departure_at=quando,  # AAAA-MM-DD ou AAAA-MM (mês inteiro)
+            currency="brl",
+            one_way=str(volta is None).lower(),
+            sorting="price",
+            limit=limite,
+        )
+        if volta:
+            params["return_at"] = volta
+        return self._get("/aviasales/v3/prices_for_dates", **params)
+
+    @staticmethod
+    def _aplicar_v3(o: Oferta, m: dict) -> None:
         o.cia = str(m.get("airline") or "")
         o.voo = f"{o.cia}{m.get('flight_number')}" if m.get("flight_number") else ""
         try:
@@ -191,6 +208,37 @@ class Radar:
             pass
         if m.get("link"):
             o.link = "https://www.aviasales.com" + str(m["link"])
+
+    def detalhar(self, o: Oferta) -> None:
+        """Tenta descobrir companhia, número do voo e horário do mais barato naquela data."""
+        try:
+            achados = self._v3(o.origem, o.destino, o.ida.isoformat(), o.volta.isoformat() if o.volta else None, 5)
+        except (requests.RequestException, RuntimeError, ValueError):
+            return
+        if achados:
+            self._aplicar_v3(o, min(achados, key=lambda x: x.get("price", 1e12)))
+
+    def melhor_do_mes(self, origem: str, destino: str, mes: str, hoje: date | None = None) -> Oferta | None:
+        """Voo só de ida mais barato de `origem` para `destino` no mês AAAA-MM, com o dia exato."""
+        hoje = hoje or date.today()
+        melhor, bruto = None, None
+        for m in self._v3(origem, destino, mes):
+            try:
+                ida = date.fromisoformat(str(m["departure_at"])[:10])
+                preco = float(m["price"])
+                conexoes = int(m.get("transfers") or 0)
+            except (KeyError, TypeError, ValueError):
+                continue
+            if ida < hoje or ida.strftime("%Y-%m") != mes or conexoes > self.cfg.get("max_conexoes", 2):
+                continue
+            if melhor is None or preco < melhor.preco:
+                melhor = Oferta(origem, destino, ida, None, preco, conexoes)
+                bruto = m
+        if melhor:
+            self._aplicar_v3(melhor, bruto)
+            melhor.internacional = self.cidades.internacional(destino)
+            melhor.nome_destino = self.cidades.nome(destino)
+        return melhor
 
 
 def link_google_flights(o: Oferta) -> str:

@@ -106,6 +106,40 @@ def cmd_telegram_id(args) -> int:
     return 0
 
 
+def cmd_app(args) -> int:
+    from .web import conectar, criar_app
+
+    with conectar(DADOS / "app.db") as db:
+        if not db.execute("SELECT 1 FROM usuarios").fetchone():
+            print("Nenhum usuário criado ainda. Rode antes: python -m robo criar-usuario SEU_NOME")
+            return 1
+    app = criar_app(carregar_config(), chromium=args.chromium)
+    host = "0.0.0.0" if args.rede else "127.0.0.1"
+    print(f"Abra no navegador: http://localhost:{args.porta}   (Ctrl+C para fechar)")
+    from werkzeug.serving import run_simple
+
+    run_simple(host, args.porta, app, threaded=True)
+    return 0
+
+
+def cmd_criar_usuario(args) -> int:
+    import getpass
+
+    from .web import criar_usuario
+
+    senha = args.senha or getpass.getpass("Senha (mínimo 8 caracteres): ")
+    if not args.senha and senha != getpass.getpass("Repita a senha: "):
+        print("As senhas não conferem.")
+        return 1
+    try:
+        criar_usuario(DADOS / "app.db", args.nome, senha)
+    except ValueError as e:
+        print(e)
+        return 1
+    print(f"Usuário '{args.nome.strip().lower()}' pronto.")
+    return 0
+
+
 def main(argv=None) -> int:
     for fluxo in (sys.stdout, sys.stderr):  # acentos e emojis no terminal do Windows
         if hasattr(fluxo, "reconfigure"):
@@ -131,6 +165,17 @@ def main(argv=None) -> int:
 
     sub.add_parser("testar-telegram", help="envia uma mensagem de teste").set_defaults(f=cmd_testar_telegram)
     sub.add_parser("telegram-id", help="descobre o seu TELEGRAM_CHAT_ID").set_defaults(f=cmd_telegram_id)
+
+    a = sub.add_parser("app", help="abre o programinha no navegador (login, busca por rota e mês)")
+    a.add_argument("--porta", type=int, default=8000)
+    a.add_argument("--rede", action="store_true", help="permite acessar de outros aparelhos da mesma rede Wi-Fi")
+    a.add_argument("--chromium", help=argparse.SUPPRESS)
+    a.set_defaults(f=cmd_app)
+
+    u = sub.add_parser("criar-usuario", help="cria (ou troca a senha de) um usuário do programinha")
+    u.add_argument("nome")
+    u.add_argument("--senha", help=argparse.SUPPRESS)
+    u.set_defaults(f=cmd_criar_usuario)
 
     args = ap.parse_args(argv)
     return args.f(args)

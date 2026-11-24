@@ -52,6 +52,7 @@ def montar_link(modelo: str, origem: str, destino: str, ida: date, volta: date |
         ida=ida.isoformat(),
         ida_ms=_ms(ida),
         ida_mdy=ida.strftime("%m/%d/%Y"),
+        ida_dmy=ida.strftime("%d-%m-%Y"),
         volta=volta.isoformat() if volta else "",
         volta_ms=_ms(volta) if volta else "",
         volta_mdy=volta.strftime("%m/%d/%Y") if volta else "",
