@@ -286,8 +286,12 @@ def test_modo_assistido_le_o_que_a_extensao_manda(tmp_path, monkeypatch):
     with c.session_transaction() as s:
         s["usuario"] = "a"
     rid = ida["id"]
+    with web.closing(web.conectar(db)) as cx, cx:
+        cx.execute("INSERT OR IGNORE INTO usuarios(nome, senha_hash) VALUES('a','x')")
+    chave = web.chave_do_usuario(db, "a")
+    H = {"X-Radar-Chave": chave}
     # sem ter aberto pelo programa, a leitura é ignorada
-    sem = c.post("/api/captura", json={"url": "https://b2c.voegol.com.br/x", "texto": "Ter, 9 Mar BRL 390,00"}).json
+    sem = c.post("/api/captura", headers=H, json={"url": "https://b2c.voegol.com.br/x", "texto": "Ter, 9 Mar BRL 390,00"}).json
     assert sem["lido"] is False
     # abre o site da companhia pelo programa e a extensão manda o texto da página
     resp = c.get(f"/abrir/{rid}/cia")
@@ -297,7 +301,7 @@ def test_modo_assistido_le_o_que_a_extensao_manda(tmp_path, monkeypatch):
     # o link de teste não é de um domínio real; registra a espera como se fosse a GOL
     monkeypatch.setattr(web, "chave_site", lambda u: "gol")
     c.get(f"/abrir/{rid}/cia")
-    lido = c.post("/api/captura", json={"url": "https://b2c.voegol.com.br/compra", "texto": texto}).json
+    lido = c.post("/api/captura", headers=H, json={"url": "https://b2c.voegol.com.br/compra", "texto": texto}).json
     assert lido["lido"] is True and "390,00" in lido["mensagem"]
     d = c.get("/api/busca/1").json["resultados"][0]
     assert (d["ida"], d["preco"], d["preco_radar"]) == ("2027-03-09", 390.0, 410.0)
@@ -308,12 +312,21 @@ def test_modo_assistido_le_o_que_a_extensao_manda(tmp_path, monkeypatch):
     c.get(f"/abrir/{rid}/smiles")
     js = [{"url": "https://api/x", "dados": {"flights": [{"fare": {"miles": 14500}}, {"fare": {"miles": 11200}}],
                                              "milesBalance": 3000}}]
-    lido = c.post("/api/captura", json={"url": "https://www.smiles.com.br/x", "texto": "carregando", "json": js}).json
+    lido = c.post("/api/captura", headers=H, json={"url": "https://www.smiles.com.br/x", "texto": "carregando", "json": js}).json
     assert lido["lido"] is True
     m = c.get("/api/busca/1").json["resultados"][0]["milhas"][0]
     assert (m["status"], m["milhas"], m["reais"]) == ("ok", 11200, 179)
-    # de outro computador da rede, recusa
-    assert c.post("/api/captura", json={}, environ_base={"REMOTE_ADDR": "192.168.0.9"}).status_code == 403
+    # sem chave, ou com chave errada, recusa
+    assert c.post("/api/captura", json={}).status_code == 403
+    assert c.post("/api/captura", headers={"X-Radar-Chave": "errada"}, json={}).status_code == 403
+    # a chave de outro usuário não mexe nas buscas deste
+    with web.closing(web.conectar(db)) as cx, cx:
+        cx.execute("INSERT INTO usuarios(nome, senha_hash) VALUES('b','x')")
+    outra = {"X-Radar-Chave": web.chave_do_usuario(db, "b")}
+    r2 = c.post("/api/captura", headers=outra, json={"url": "https://www.smiles.com.br/x", "texto": "9.000 milhas"}).json
+    assert r2["lido"] is False
+    # a página logada traz a chave para a extensão
+    assert chave in c.get("/").get_data(as_text=True)
 
 
 def test_chave_site():
@@ -340,3 +353,23 @@ def test_resumo_da_gol_ignora_oferta_de_upgrade():
     Sem surpresas! Todos os impostos estão incluídos no preço total. Total da sua reserva: BRL 390,52"""
     assert milhas.menor_preco_pagina(texto) == 390.52
     assert milhas.menor_preco_pagina("Bagagem extra por BRL 89,90") is None
+
+
+def test_login_bloqueia_depois_de_muitas_tentativas(tmp_path, monkeypatch):
+    from robo.web import criar_app, criar_usuario
+    criar_usuario(tmp_path / "a.db", "ana", "segredo123")
+    criar_usuario(tmp_path / "a.db", "ana", "nova-senha-456")  # trocar a senha mantém o usuário
+    r = Radar("x", CFG)
+    r.cidades._mapa = {}
+    app = criar_app(dict(CFG, milhas={"ativo": False}), tmp_path / "a.db", fabrica_radar=lambda: r)
+    import robo.web as web
+    monkeypatch.setattr(web.time, "sleep", lambda s: None)
+    c = app.test_client()
+    def tentar(senha):
+        with c.session_transaction() as s:
+            s["csrf"] = "t"
+        return c.post("/login", data={"usuario": "ana", "senha": senha, "csrf": "t"})
+    assert tentar("segredo123").status_code == 200  # senha antiga não vale mais
+    for _ in range(9):
+        tentar("errada")
+    assert tentar("nova-senha-456").status_code == 429  # bloqueado mesmo com a senha certa

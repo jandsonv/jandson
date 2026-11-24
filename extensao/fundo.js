@@ -36,17 +36,26 @@ async function processar() {
 }
 
 chrome.runtime.onMessage.addListener((msg, sender) => {
+  if (msg && msg.tipo === "config") {
+    // Endereço do programa (no seu Mac ou na internet) e a chave da sua conta.
+    chrome.storage.local.set({ servidor: msg.servidor, chave: msg.chave });
+    return;
+  }
   if (msg && msg.tipo === "conferir") {
     if (sender.tab) abaDoPrograma = sender.tab.id;
     for (const u of msg.urls) if (!fila.includes(u)) fila.push(u);
     processar();
     return;
   }
-  fetch("http://localhost:8000/api/captura", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Radar-Extensao": "1" },
-    body: JSON.stringify(msg),
-  })
+  chrome.storage.local.get(["servidor", "chave"])
+    .then(cfg => {
+      if (!cfg.servidor || !cfg.chave) throw new Error("Abra o Radar de Passagens uma vez para conectar a extensão.");
+      return fetch(cfg.servidor + "/api/captura", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Radar-Chave": cfg.chave },
+        body: JSON.stringify(msg),
+      });
+    })
     .then(r => r.json())
     .then(r => {
       if (!sender.tab) return;

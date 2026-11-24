@@ -1,11 +1,12 @@
 {
   "manifest_version": 3,
   "name": "Radar de Passagens - leitor",
-  "version": "1.1",
-  "description": "Lê os preços das páginas de companhias aéreas e programas de milhas que você abrir e envia para o Radar de Passagens no seu computador.",
+  "version": "1.2",
+  "description": "Lê os preços das páginas de companhias aéreas e programas de milhas que você abrir pelo Radar de Passagens e envia para a sua conta no Radar.",
   "host_permissions": [
     "http://localhost:8000/*",
-    "http://127.0.0.1:8000/*"
+    "http://127.0.0.1:8000/*",
+    "https://*.up.railway.app/*"
   ],
   "background": {
     "service_worker": "fundo.js"
@@ -42,12 +43,16 @@
     {
       "matches": [
         "http://localhost:8000/*",
-        "http://127.0.0.1:8000/*"
+        "http://127.0.0.1:8000/*",
+        "https://*.up.railway.app/*"
       ],
       "js": [
         "ponte.js"
       ],
       "run_at": "document_start"
     }
+  ],
+  "permissions": [
+    "storage"
   ]
 }

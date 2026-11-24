@@ -41,6 +41,23 @@ O modo antigo, com o robô abrindo os sites sozinho, ainda existe (`modo_sites: 
 
 Se um site de milhas pedir verificação ou mudar de layout, o robô não tenta burlar: o alerta sai do mesmo jeito, com o link da busca pronto para você abrir.
 
+## Na internet (Railway)
+
+O programa pode ficar num servidor, com endereço próprio e login, acessível de qualquer lugar, sem Terminal. A extensão do Chrome continua sendo quem lê os preços nos sites (eles bloqueiam servidores e robôs); ela envia as leituras para a sua conta no servidor.
+
+1. Entre em **railway.com** com a sua conta do GitHub.
+2. **New Project → Deploy from GitHub repo** → escolha **jandsonv/jandson** (autorize o Railway a ver o repositório, se pedir).
+3. No serviço criado, em **Settings → Source**, confira se o branch é `claude/focused-wright-zesq1r`.
+4. Em **Variables**, crie:
+   - `TRAVELPAYOUTS_TOKEN` = seu token do Travelpayouts
+   - `RADAR_USUARIO` = o nome de usuário que você quer
+   - `RADAR_SENHA` = uma senha forte (mínimo 8 caracteres)
+5. Crie um **Volume** para o serviço com o caminho de montagem `/data` (é onde ficam as buscas; sem ele, as buscas somem a cada atualização).
+6. Em **Settings → Networking**, clique em **Generate Domain**. Esse é o endereço do seu Radar.
+7. Abra o endereço, entre com usuário e senha, e abra qualquer busca uma vez: a extensão se conecta sozinha à sua conta.
+
+O servidor usa o `Dockerfile` deste repositório. Para trocar a senha, mude `RADAR_SENHA` no Railway; ela vale a partir do próximo reinício.
+
 ## Instalação (Mac) — um comando só
 
 1. Crie uma conta gratuita em travelpayouts.com e copie o **API token** do perfil.

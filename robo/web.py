@@ -54,7 +54,7 @@ def conectar(caminho) -> sqlite3.Connection:
     # Atualiza bancos criados por versões anteriores.
     for tabela, coluna, tipo in (("buscas", "ida_volta", "INTEGER DEFAULT 0"), ("resultados", "trecho", "TEXT"),
                                  ("resultados", "de", "TEXT"), ("resultados", "para", "TEXT"),
-                                 ("resultados", "preco_radar", "REAL"), ("buscas", "varredura", "INTEGER DEFAULT 0"), ("resultados", "conferido", "TEXT")):
+                                 ("resultados", "preco_radar", "REAL"), ("usuarios", "chave", "TEXT"), ("buscas", "varredura", "INTEGER DEFAULT 0"), ("resultados", "conferido", "TEXT")):
         if coluna not in {c[1] for c in db.execute(f"PRAGMA table_info({tabela})")}:
             db.execute(f"ALTER TABLE {tabela} ADD COLUMN {coluna} {tipo}")
     return db
@@ -64,7 +64,22 @@ def criar_usuario(caminho, nome: str, senha: str) -> None:
     if len(senha) < 8:
         raise ValueError("A senha precisa ter pelo menos 8 caracteres.")
     with closing(conectar(caminho)) as db, db:
-        db.execute("INSERT OR REPLACE INTO usuarios VALUES(?,?)", (nome.strip().lower(), generate_password_hash(senha)))
+        nome = nome.strip().lower()
+        if db.execute("SELECT 1 FROM usuarios WHERE nome=?", (nome,)).fetchone():
+            db.execute("UPDATE usuarios SET senha_hash=? WHERE nome=?", (generate_password_hash(senha), nome))
+        else:
+            db.execute("INSERT INTO usuarios(nome, senha_hash) VALUES(?,?)", (nome, generate_password_hash(senha)))
+
+
+def chave_do_usuario(caminho, nome: str) -> str:
+    """Chave secreta que a extensão usa para mandar leituras para a conta deste usuário."""
+    with closing(conectar(caminho)) as db, db:
+        linha = db.execute("SELECT chave FROM usuarios WHERE nome=?", (nome,)).fetchone()
+        if linha and linha["chave"]:
+            return linha["chave"]
+        chave = secrets.token_urlsafe(24)
+        db.execute("UPDATE usuarios SET chave=? WHERE nome=?", (chave, nome))
+        return chave
 
 
 def lista_meses(inicio: str, fim: str) -> list[str]:
@@ -328,7 +343,14 @@ def criar_app(cfg: dict, caminho_db=None, chromium: str | None = None, fabrica_r
     caminho_db = caminho_db or DADOS / "app.db"
     app = Flask(__name__)
     app.secret_key = _chave_sessao(Path(caminho_db).parent)
-    app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax")
+    app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax",
+                      MAX_CONTENT_LENGTH=8 * 1024 * 1024)
+
+    @app.context_processor
+    def _chave_extensao():
+        # A extensão lê esta chave da página (meta "radar-chave") para saber para onde e em nome de quem enviar.
+        u = session.get("usuario")
+        return {"chave_extensao": chave_do_usuario(caminho_db, u) if u else ""}
     executor = Executor(cfg, caminho_db, chromium, fabrica_radar)
     app.executor = executor
     cidades = executor.fabrica_radar().cidades
@@ -363,10 +385,20 @@ def criar_app(cfg: dict, caminho_db=None, chromium: str | None = None, fabrica_r
         if request.method == "POST" and (not esperado or request.form.get("csrf") != esperado):
             abort(400, "Sessão expirada. Volte e tente de novo.")
 
+    falhas: dict[str, list[float]] = {}
+    trava_login = threading.Lock()
+
     @app.route("/login", methods=["GET", "POST"])
     def login():
         erro = None
         if request.method == "POST":
+            ip = request.remote_addr or "?"
+            agora = time.time()
+            with trava_login:
+                recentes = [t for t in falhas.get(ip, []) if agora - t < 15 * 60]
+                falhas[ip] = recentes
+            if len(recentes) >= 10:
+                return render_template("login.html", erro="Muitas tentativas erradas. Espere 15 minutos."), 429
             nome = request.form.get("usuario", "").strip().lower()
             with closing(conectar(caminho_db)) as db:
                 u = db.execute("SELECT senha_hash FROM usuarios WHERE nome=?", (nome,)).fetchone()
@@ -375,6 +407,8 @@ def criar_app(cfg: dict, caminho_db=None, chromium: str | None = None, fabrica_r
                 session["usuario"] = nome
                 session.permanent = True
                 return redirect(url_for("inicio"))
+            with trava_login:
+                falhas.setdefault(ip, []).append(agora)
             time.sleep(1)  # atrasa tentativas de adivinhar a senha
             erro = "Usuário ou senha incorretos."
         return render_template("login.html", erro=erro)
@@ -460,7 +494,7 @@ def criar_app(cfg: dict, caminho_db=None, chromium: str | None = None, fabrica_r
         b, _ = _busca(busca_id)
         return render_template("busca.html", b=b, origens=json.loads(b["origens"]), meses=json.loads(b["meses"]))
 
-    aguardando: dict[str, dict] = {}  # site -> o que você abriu por último nele
+    aguardando: dict[tuple, dict] = {}  # (usuário, site) -> o que ele abriu por último nesse site
     trava = threading.Lock()
 
     def _linha(rid: int):
@@ -483,22 +517,25 @@ def criar_app(cfg: dict, caminho_db=None, chromium: str | None = None, fabrica_r
         site = chave_site(destino)
         if site:
             with trava:
-                aguardando[site] = {"rid": rid, "alvo": alvo, "quando": time.time()}
+                aguardando[(session["usuario"], site)] = {"rid": rid, "alvo": alvo, "quando": time.time()}
         return redirect(destino)
 
     @app.post("/api/captura")
     def captura():
-        # Só aceita leituras vindas deste computador (a extensão do seu Chrome).
-        if request.remote_addr not in ("127.0.0.1", "::1"):
+        # Só aceita leituras da extensão de um usuário, identificada pela chave secreta dele.
+        chave = request.headers.get("X-Radar-Chave", "")
+        with closing(conectar(caminho_db)) as db:
+            u = db.execute("SELECT nome FROM usuarios WHERE chave=?", (chave,)).fetchone() if chave else None
+        if not u:
             abort(403)
         dados = request.get_json(silent=True) or {}
         site = chave_site(str(dados.get("url", "")))
         with trava:
-            alvo = aguardando.get(site) if site else None
+            alvo = aguardando.get((u["nome"], site)) if site else None
         if not alvo or time.time() - alvo["quando"] > 20 * 60:
             return jsonify(lido=False, mensagem="Abra esta página pelo Radar de Passagens para ela ser lida.")
         r = _linha(alvo["rid"])
-        if not r:
+        if not r or r["usuario"] != u["nome"]:
             return jsonify(lido=False, mensagem="Busca não encontrada.")
         texto, jsons = str(dados.get("texto", "")), [j.get("dados") for j in (dados.get("json") or [])
                                                       if isinstance(j, dict)]

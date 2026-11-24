@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+{% if chave_extensao %}<meta name="radar-chave" content="{{ chave_extensao }}">{% endif %}
 <title>{% block titulo %}Radar de passagens{% endblock %}</title>
 <style>
 :root{--fundo:#f4f6f9;--cartao:#fff;--texto:#16202e;--suave:#5d6b7e;--borda:#dde3ea;--marca:#0b63ce;--marca-texto:#fff;--bom:#0f7a4a;--bom-fundo:#e3f5ec;--alerta:#9a5b00;--erro:#b3261e;--chip:#eef2f7}

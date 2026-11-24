@@ -1,0 +1,8 @@
+.env
+.venv
+dados
+saida
+perfil-navegador
+tests
+extensao
+**/__pycache__

@@ -7,7 +7,7 @@ from pathlib import Path
 import yaml
 
 RAIZ = Path(__file__).resolve().parent.parent
-DADOS = RAIZ / "dados"
+DADOS = Path(os.environ.get("RADAR_DADOS") or RAIZ / "dados")
 SAIDA = RAIZ / "saida"
 PERFIL = RAIZ / "perfil-navegador"
 
