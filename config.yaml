@@ -106,3 +106,9 @@ companhias:
 # Depois do radar, abre o site da companhia no dia mais barato de cada mês para
 # pegar o preço real e conferir os dias vizinhos (o radar usa preços em cache).
 conferir_no_site: true
+
+# Como conferir preços nos sites das companhias e de milhas:
+#   assistido: você clica nos links e a extensão do Chrome lê os preços (recomendado;
+#              os sites bloqueiam navegador controlado por robô).
+#   robo:      o robô abre os sites sozinho (os sites costumam bloquear).
+modo_sites: assistido

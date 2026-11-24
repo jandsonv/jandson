@@ -13,7 +13,7 @@
     <thead><tr><th>Mês</th><th>Trecho</th><th>Melhor dia</th><th>Em dinheiro</th><th>Voo</th><th>Comprar</th>{% if b.com_milhas %}<th>Milhas nesse dia</th>{% endif %}</tr></thead>
     <tbody id="linhas"></tbody>
   </table></div>
-  <p class="suave pequeno">Preço por pessoa, por trecho. Com ✓, o preço foi lido no site da companhia nesta busca; sem ✓, vem do radar (cache de buscas recentes) e pode ter mudado. As milhas não incluem as taxas. Em verde: milhas valendo menos que o dinheiro, pelo valor do milheiro configurado.</p>
+  <p class="suave pequeno">Clique em "Site da…" ou num programa de milhas: a página abre no seu Chrome, e a extensão Radar de Passagens lê o preço e atualiza esta tabela sozinha (o ícone dela mostra ✓ quando leu). Preço por pessoa, por trecho. Com ✓, o preço foi lido no site da companhia nesta busca; sem ✓, vem do radar (cache de buscas recentes) e pode ter mudado. As milhas não incluem as taxas. Em verde: milhas valendo menos que o dinheiro, pelo valor do milheiro configurado.</p>
 </div>
 <script>
 const COM_MILHAS = {{ 'true' if b.com_milhas else 'false' }};
@@ -25,7 +25,7 @@ function dataBR(iso){ const d = new Date(iso + "T12:00:00"); return d.toLocaleDa
 function el(tag, texto, classe){ const e = document.createElement(tag); if (texto != null) e.textContent = texto; if (classe) e.className = classe; return e; }
 function link(href, texto, classe){ const a = el("a", texto, classe); a.href = href; a.target = "_blank"; a.rel = "noopener"; return a; }
 
-function chipMilhas(m, precoDinheiro){
+function chipMilhas(m, precoDinheiro, rid){
   const c = el("span", null, "chip");
   let texto;
   if (m.status === "ok" && m.milhas) {
@@ -35,8 +35,9 @@ function chipMilhas(m, precoDinheiro){
   else if (m.status === "bloqueado") texto = m.nome + ": o site barrou, abrir";
   else if (m.status === "nao_consultado") texto = m.nome + ": na fila";
   else if (m.status === "so_link") texto = m.nome + ": abrir busca";
+  else if (m.status === "abrir") texto = m.nome + ": abrir e ler";
   else texto = m.nome + ": não li, abrir";
-  c.appendChild(link(m.link, texto));
+  c.appendChild(link("/abrir/" + rid + "/" + m.programa, texto));
   return c;
 }
 
@@ -83,10 +84,10 @@ function desenhar(d){
       const voo = [r.voo || r.nome_cia, r.hora ? "às " + r.hora : "", r.conexoes ? r.conexoes + " conexão(ões)" : "direto"].filter(Boolean).join(" · ");
       tr.appendChild(el("td", voo));
       const comprar = el("td");
-      if (r.link_cia) comprar.appendChild(link(r.link_cia, "Site da " + r.nome_cia, "botao fino"));
+      if (r.link_cia) comprar.appendChild(link("/abrir/" + r.id + "/cia", "Site da " + r.nome_cia, "botao fino"));
       comprar.appendChild(link(r.link_google, "Google Voos", "botao fino borda"));
       tr.appendChild(comprar);
-      if (COM_MILHAS) { const td = el("td"); r.milhas.forEach(m => td.appendChild(chipMilhas(m, r.preco))); tr.appendChild(td); }
+      if (COM_MILHAS) { const td = el("td"); r.milhas.forEach(m => td.appendChild(chipMilhas(m, r.preco, r.id))); tr.appendChild(td); }
       corpo.appendChild(tr);
     });
   });
@@ -118,9 +119,9 @@ async function atualizar(){
     const r = await fetch("{{ url_for('api_busca', busca_id=b.id) }}");
     if (r.status === 401) { location.href = "{{ url_for('login') }}"; return; }
     const d = await r.json(); desenhar(d);
-    if (d.status === "pronto" || d.status === "erro") return;
   } catch (e) {}
-  setTimeout(atualizar, 3000);
+  // Continua atualizando: as leituras da extensão chegam enquanto você navega.
+  setTimeout(atualizar, document.visibilityState === "visible" ? 3000 : 8000);
 }
 atualizar();
 </script>

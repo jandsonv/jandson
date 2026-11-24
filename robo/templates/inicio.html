@@ -21,8 +21,8 @@
       <p><label for="fim">Até</label><input type="month" id="fim" name="fim" value="{{ form.fim }}" required></p>
     </div>
     {% if milhas_ativo %}<p class="opcoes"><label><input type="checkbox" name="milhas" value="1" {{ 'checked' if form.milhas }}> Conferir milhas (Smiles, LATAM Pass e Azul) no dia mais barato de cada mês</label></p>{% endif %}
-    <p class="opcoes"><label><input type="checkbox" name="varredura" value="1" {{ 'checked' if form.varredura }}> Varredura completa nos sites das companhias (mais precisa, bem mais lenta: use para 1 ou 2 meses)</label></p>
-    <p class="suave pequeno">Até {{ max_meses }} meses por busca. Com milhas, cada mês leva alguns minutos por trecho, porque o robô consulta os sites devagar. A janela do Chrome que abrir é o robô trabalhando: não feche.</p>
+    {% if modo_robo %}<p class="opcoes"><label><input type="checkbox" name="varredura" value="1" {{ 'checked' if form.varredura }}> Varredura completa nos sites das companhias (mais precisa, bem mais lenta: use para 1 ou 2 meses)</label></p>{% endif %}
+    <p class="suave pequeno">Até {{ max_meses }} meses por busca. {% if modo_robo %}Com milhas, cada mês leva alguns minutos por trecho, porque o robô consulta os sites devagar. {% endif %}{% if modo_robo %}A janela do Chrome que abrir é o robô trabalhando: não feche.{% else %}Depois, clique nos links do resultado: a página abre no seu Chrome e a extensão lê o preço.{% endif %}</p>
     <button>Procurar</button>
   </form>
 </div>

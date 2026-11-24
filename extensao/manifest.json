@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "Radar de Passagens - leitor",
+  "version": "1.0",
+  "description": "Lê os preços das páginas de companhias aéreas e programas de milhas que você abrir e envia para o Radar de Passagens no seu computador.",
+  "host_permissions": ["http://localhost:8000/*", "http://127.0.0.1:8000/*"],
+  "background": {"service_worker": "fundo.js"},
+  "action": {"default_title": "Radar de Passagens"},
+  "content_scripts": [
+    {
+      "matches": ["https://*.smiles.com.br/*", "https://*.latamairlines.com/*", "https://*.voeazul.com.br/*", "https://*.voegol.com.br/*"],
+      "js": ["pagina.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://*.smiles.com.br/*", "https://*.latamairlines.com/*", "https://*.voeazul.com.br/*", "https://*.voegol.com.br/*"],
+      "js": ["leitor.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

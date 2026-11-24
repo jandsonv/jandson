@@ -21,6 +21,19 @@ from .config import DADOS, segredo
 from .radar import Oferta, Radar, link_google_flights
 
 MAX_MESES = 12
+MSG_ASSISTIDO = ("Radar pronto. Para o preço real, clique em \"Site da…\" e nos programas de milhas: "
+                 "a página abre no seu Chrome e a extensão lê o valor para esta tabela.")
+SITES = {"smiles.com.br": "smiles", "latamairlines.com": "latam", "voeazul.com.br": "azul", "voegol.com.br": "gol"}
+
+
+def chave_site(url: str) -> str | None:
+    from urllib.parse import urlparse
+
+    host = (urlparse(url).hostname or "").lower()
+    for dominio, chave in SITES.items():
+        if host == dominio or host.endswith("." + dominio):
+            return chave
+    return None
 ESQUEMA = """
 CREATE TABLE IF NOT EXISTS usuarios(nome TEXT PRIMARY KEY, senha_hash TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS buscas(
@@ -216,6 +229,17 @@ class Executor:
             with closing(conectar(self.caminho_db)) as db, db:
                 db.execute("UPDATE resultados SET milhas=? WHERE id=?", (json.dumps(dados), rid))
 
+        if cfg.get("modo_sites", "assistido") != "robo":
+            # Modo assistido: você abre os sites pelo programa e a extensão do Chrome lê os preços.
+            for rid, _, _, o in achados:
+                rs = mod_milhas.links_para(cfg_m, o.origem, o.destino, o.ida, None) if b["com_milhas"] else []
+                for r in rs:
+                    r.status = "abrir"
+                gravar(rid, rs)
+            self._marcar(busca_id, "pronto", MSG_ASSISTIDO if achados else
+                         "Nenhum preço encontrado para essa rota nesses meses.")
+            return
+
         conferir = cfg.get("conferir_no_site", True)
         if not b["varredura"] and not (achados and (b["com_milhas"] or conferir)):
             self._marcar(busca_id, "pronto", "" if achados else "Nenhum preço encontrado para essa rota nesses meses.")
@@ -334,6 +358,8 @@ def criar_app(cfg: dict, caminho_db=None, chromium: str | None = None, fabrica_r
     @app.before_request
     def _confere_csrf():
         esperado = session.get("csrf")
+        if request.path == "/api/captura":
+            return None
         if request.method == "POST" and (not esperado or request.form.get("csrf") != esperado):
             abort(400, "Sessão expirada. Volte e tente de novo.")
 
@@ -377,6 +403,7 @@ def criar_app(cfg: dict, caminho_db=None, chromium: str | None = None, fabrica_r
             "inicio.html", erro=erro, form=form, buscas=buscas, max_meses=MAX_MESES,
             origens=[(c, cidades.nome(c)) for c in cfg["origens"]],
             milhas_ativo=cfg.get("milhas", {}).get("ativo", True), json=json,
+            modo_robo=cfg.get("modo_sites", "assistido") == "robo",
         )
 
     @app.post("/buscar")
@@ -385,7 +412,8 @@ def criar_app(cfg: dict, caminho_db=None, chromium: str | None = None, fabrica_r
         f = request.form
         form = {"inicio": f.get("inicio", ""), "fim": f.get("fim", ""), "destino": f.get("destino", "").strip(),
                 "origens": [o for o in f.getlist("origens") if o in cfg["origens"]], "milhas": bool(f.get("milhas")),
-                "ida_volta": f.get("tipo") == "ida_volta", "varredura": bool(f.get("varredura"))}
+                "ida_volta": f.get("tipo") == "ida_volta",
+                "varredura": bool(f.get("varredura")) and cfg.get("modo_sites", "assistido") == "robo"}
         try:
             meses = lista_meses(form["inicio"], form["fim"])
         except ValueError:
@@ -423,6 +451,101 @@ def criar_app(cfg: dict, caminho_db=None, chromium: str | None = None, fabrica_r
     def ver_busca(busca_id):
         b, _ = _busca(busca_id)
         return render_template("busca.html", b=b, origens=json.loads(b["origens"]), meses=json.loads(b["meses"]))
+
+    aguardando: dict[str, dict] = {}  # site -> o que você abriu por último nele
+    trava = threading.Lock()
+
+    def _linha(rid: int):
+        with closing(conectar(caminho_db)) as db:
+            return db.execute("SELECT r.*, b.usuario FROM resultados r JOIN buscas b ON b.id=r.busca_id WHERE r.id=?",
+                              (rid,)).fetchone()
+
+    @app.route("/abrir/<int:rid>/<alvo>")
+    @logado
+    def abrir(rid, alvo):
+        r = _linha(rid)
+        if not r or r["usuario"] != session["usuario"]:
+            abort(404)
+        if alvo == "cia":
+            destino = r["link_cia"]
+        else:
+            destino = next((m["link"] for m in json.loads(r["milhas"] or "[]") if m["programa"] == alvo), None)
+        if not destino:
+            abort(404)
+        site = chave_site(destino)
+        if site:
+            with trava:
+                aguardando[site] = {"rid": rid, "alvo": alvo, "quando": time.time()}
+        return redirect(destino)
+
+    @app.post("/api/captura")
+    def captura():
+        # Só aceita leituras vindas deste computador (a extensão do seu Chrome).
+        if request.remote_addr not in ("127.0.0.1", "::1"):
+            abort(403)
+        dados = request.get_json(silent=True) or {}
+        site = chave_site(str(dados.get("url", "")))
+        with trava:
+            alvo = aguardando.get(site) if site else None
+        if not alvo or time.time() - alvo["quando"] > 20 * 60:
+            return jsonify(lido=False, mensagem="Abra esta página pelo Radar de Passagens para ela ser lida.")
+        r = _linha(alvo["rid"])
+        if not r:
+            return jsonify(lido=False, mensagem="Busca não encontrada.")
+        texto, jsons = str(dados.get("texto", "")), [j.get("dados") for j in (dados.get("json") or [])
+                                                      if isinstance(j, dict)]
+        if alvo["alvo"] == "cia":
+            return jsonify(**_ler_cia(r, texto))
+        return jsonify(**_ler_milhas(r, alvo["alvo"], texto, jsons))
+
+    def _ler_cia(r, texto: str) -> dict:
+        ref = date.fromisoformat(r["ida"])
+        dias = {d: v for d, v in mod_milhas.ler_calendario(texto, ref).items()
+                if d.strftime("%Y-%m") == r["mes"] and d >= date.today()}
+        if not dias:
+            return dict(lido=False, mensagem="Ainda não encontrei os preços nesta página.")
+        melhor = min(dias, key=dias.get)
+        info = (cfg.get("companhias") or {}).get(r["cia"]) or {}
+        nome = info.get("nome") or r["nome_cia"] or r["cia"]
+        nota = f"lido por você no site da {nome}"
+        if melhor.isoformat() != r["ida"] and not (r["conferido"] or "").startswith("lido"):
+            nota += f"; o radar indicava {ref:%d/%m} por R$ {r['preco']:,.0f}".replace(",", ".")
+        elif melhor.isoformat() != r["ida"]:
+            nota = (r["conferido"] or nota)
+        mudou_dia = melhor.isoformat() != r["ida"]
+        milhas = json.loads(r["milhas"] or "[]")
+        if mudou_dia and milhas:
+            novos = mod_milhas.links_para(cfg.get("milhas", {}), r["de"] or r["origem"], r["para"], melhor, None)
+            milhas = [dict(programa=x.programa, nome=x.nome, status="abrir", milhas=None, link=x.link, reais=None)
+                      for x in novos]
+        o = Oferta(r["de"] or r["origem"], r["para"], melhor, None, dias[melhor])
+        with closing(conectar(caminho_db)) as db, db:
+            db.execute(
+                "UPDATE resultados SET ida=?, preco=?, preco_radar=COALESCE(preco_radar, ?), conferido=?, "
+                "voo=CASE WHEN ?=1 THEN '' ELSE voo END, hora=CASE WHEN ?=1 THEN '' ELSE hora END, "
+                "link_cia=?, link_google=?, milhas=? WHERE id=?",
+                (melhor.isoformat(), dias[melhor], r["preco"], nota, int(mudou_dia), int(mudou_dia),
+                 mod_milhas.montar_link(info["link"], o.origem, o.destino, melhor) if info.get("link") else r["link_cia"],
+                 link_google_flights(o), json.dumps(milhas), r["id"]),
+            )
+        return dict(lido=True, mensagem=f"Lido: R$ {dias[melhor]:,.2f} em {melhor:%d/%m}".replace(",", "X")
+                    .replace(".", ",").replace("X", "."))
+
+    def _ler_milhas(r, programa: str, texto: str, jsons: list) -> dict:
+        status, valor = mod_milhas.classificar(texto, jsons)
+        if status not in ("ok", "sem_voo", "bloqueado"):
+            return dict(lido=False, mensagem="Ainda não encontrei as milhas nesta página.")
+        valores = cfg.get("milhas", {}).get("valor_milheiro", {})
+        milhas = json.loads(r["milhas"] or "[]")
+        for m in milhas:
+            if m["programa"] == programa:
+                m.update(status=status, milhas=valor,
+                         reais=round(valor / 1000 * float(valores.get(programa, 0))) if valor else None)
+        with closing(conectar(caminho_db)) as db, db:
+            db.execute("UPDATE resultados SET milhas=? WHERE id=?", (json.dumps(milhas), r["id"]))
+        textos = {"ok": f"Lido: {valor:,} milhas".replace(",", "."), "sem_voo": "Sem voo em milhas nessa data",
+                  "bloqueado": "O site pediu verificação"}
+        return dict(lido=status == "ok", mensagem=textos[status])
 
     @app.route("/api/busca/<int:busca_id>")
     @logado

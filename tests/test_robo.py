@@ -217,7 +217,7 @@ class NavFalso:
         return r
 
 
-def _app_com_busca(tmp_path, monkeypatch, varredura):
+def _app_com_busca(tmp_path, monkeypatch, varredura, modo="robo"):
     import json as _json
     from robo import web
     monkeypatch.setattr(web.mod_milhas, "Navegador", NavFalso)
@@ -227,7 +227,7 @@ def _app_com_busca(tmp_path, monkeypatch, varredura):
     r.cidades._mapa = {}
     r.melhor_do_mes = lambda de, para, mes: (
         Oferta(de, para, date(2027, 3, 10), None, 410.0, cia="G3", voo="G31", hora_ida="05:20") if mes == "2027-03" else None)
-    cfg = dict(CFG, companhias={"G3": {"nome": "GOL", "link": "https://gol/?d={ida}&o={origem}"}},
+    cfg = dict(CFG, modo_sites=modo, companhias={"G3": {"nome": "GOL", "link": "https://gol/?d={ida}&o={origem}"}},
                milhas={"ativo": True, "programas": ["smiles"], "valor_milheiro": {"smiles": 16},
                        "links": {"smiles": {"so_ida": "https://s/{ida}"}}})
     db = tmp_path / "a.db"
@@ -236,6 +236,8 @@ def _app_com_busca(tmp_path, monkeypatch, varredura):
         c.execute("INSERT INTO buscas(usuario,origens,destino,nome_destino,meses,com_milhas,status,ida_volta,varredura) "
                   "VALUES('a',?,?,?,?,1,'na_fila',1,?)", (_json.dumps(["AJU"]), "GRU", "SP", _json.dumps(["2027-03", "2027-04"]), varredura))
     ex.executar(1)
+    if modo != "robo":
+        return cfg, db, r
     with web.closing(web.conectar(db)) as c:
         return [dict(x) for x in c.execute("SELECT * FROM resultados ORDER BY trecho")], \
             c.execute("SELECT status FROM buscas").fetchone()[0]
@@ -259,3 +261,58 @@ def test_varredura_acha_dia_fora_do_alcance_do_radar(tmp_path, monkeypatch):
     assert (marco["ida"], marco["preco"]) == ("2027-03-27", 300.0) and "varredura" in marco["conferido"]
     abril = [l for l in linhas if l["mes"] == "2027-04"]
     assert len(abril) == 2 and all(l["preco"] == 500.0 for l in abril)  # o radar não tinha abril
+
+
+def test_modo_assistido_le_o_que_a_extensao_manda(tmp_path, monkeypatch):
+    import json as _json
+    from robo import web
+    hoje = date.today
+    cfg, db, r = _app_com_busca(tmp_path, monkeypatch, 0, modo="assistido")
+    with web.closing(web.conectar(db)) as c:
+        linhas = [dict(x) for x in c.execute("SELECT * FROM resultados ORDER BY trecho")]
+        assert c.execute("SELECT status FROM buscas").fetchone()[0] == "pronto"
+    ida = linhas[0]
+    assert ida["ida"] == "2027-03-10" and ida["conferido"] is None  # nada aberto pelo robô
+    assert [m["status"] for m in _json.loads(ida["milhas"])] == ["abrir"]
+
+    app = web.criar_app(cfg, db, fabrica_radar=lambda: r)
+    c = app.test_client()
+    with c.session_transaction() as s:
+        s["usuario"] = "a"
+    rid = ida["id"]
+    # sem ter aberto pelo programa, a leitura é ignorada
+    sem = c.post("/api/captura", json={"url": "https://b2c.voegol.com.br/x", "texto": "Ter, 9 Mar BRL 390,00"}).json
+    assert sem["lido"] is False
+    # abre o site da companhia pelo programa e a extensão manda o texto da página
+    resp = c.get(f"/abrir/{rid}/cia")
+    assert resp.status_code == 302 and resp.location == "https://gol/?d=2027-03-10&o=AJU"
+    app_sites = {"https://gol/": "voegol.com.br"}
+    texto = "Seg, 8 Mar\nA partir de BRL 450,00\nTer, 9 Mar\nA partir de BRL 390,00\nQua, 10 Mar\nA partir de BRL 436,52"
+    # o link de teste não é de um domínio real; registra a espera como se fosse a GOL
+    monkeypatch.setattr(web, "chave_site", lambda u: "gol")
+    c.get(f"/abrir/{rid}/cia")
+    lido = c.post("/api/captura", json={"url": "https://b2c.voegol.com.br/compra", "texto": texto}).json
+    assert lido["lido"] is True and "390,00" in lido["mensagem"]
+    d = c.get("/api/busca/1").json["resultados"][0]
+    assert (d["ida"], d["preco"], d["preco_radar"]) == ("2027-03-09", 390.0, 410.0)
+    assert d["conferido"].startswith("lido por você") and d["link_cia"] == "https://gol/?d=2027-03-09&o=AJU"
+    assert d["milhas"][0]["link"] == "https://s/2027-03-09"  # milhas seguem o dia novo
+    # milhas: abre a Smiles pelo programa e a extensão manda os dados que a página carregou
+    monkeypatch.setattr(web, "chave_site", lambda u: "smiles")
+    c.get(f"/abrir/{rid}/smiles")
+    js = [{"url": "https://api/x", "dados": {"flights": [{"fare": {"miles": 14500}}, {"fare": {"miles": 11200}}],
+                                             "milesBalance": 3000}}]
+    lido = c.post("/api/captura", json={"url": "https://www.smiles.com.br/x", "texto": "carregando", "json": js}).json
+    assert lido["lido"] is True
+    m = c.get("/api/busca/1").json["resultados"][0]["milhas"][0]
+    assert (m["status"], m["milhas"], m["reais"]) == ("ok", 11200, 179)
+    # de outro computador da rede, recusa
+    assert c.post("/api/captura", json={}, environ_base={"REMOTE_ADDR": "192.168.0.9"}).status_code == 403
+
+
+def test_chave_site():
+    from robo.web import chave_site
+    assert chave_site("https://b2c.voegol.com.br/compra") == "gol"
+    assert chave_site("https://www.latamairlines.com/br/pt") == "latam"
+    assert chave_site("https://voeazul.com.br/x") == "azul"
+    assert chave_site("https://smiles.com.br.golpe.net/") is None

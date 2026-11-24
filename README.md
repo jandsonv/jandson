@@ -16,13 +16,19 @@ O programa roda no seu computador e abre em `http://localhost:8000`. As buscas f
 Como a busca funciona:
 
 1. **Radar** (segundos): o Travelpayouts aponta o dia mais barato de cada mês, na ida e na volta. São preços em cache, de buscas recentes de outras pessoas.
-2. **Conferência no site da companhia**: o robô abre o site (GOL, LATAM ou Azul) nesse dia, lê o preço real e os 3 dias de cada lado, e troca pelo mais barato do mesmo mês. Preços conferidos aparecem com ✓.
-3. **Milhas**: no dia final de cada mês e trecho, consulta Smiles, LATAM Pass e Azul.
-4. **Varredura completa** (opcional, lenta): percorre o mês inteiro no site de cada companhia, sem depender do cache. Use para 1 ou 2 meses.
+2. **Preço real, lido no seu Chrome**: na tabela, clique em **Site da GOL/LATAM/Azul** ou num programa de milhas. A página abre no seu Chrome normal e a extensão **Radar de Passagens - leitor** lê o preço e atualiza a tabela sozinha (o ícone dela mostra ✓). No site da companhia, ela lê também os dias vizinhos e troca pelo mais barato do mês.
 
-Se algum programa de milhas pedir login, dê dois cliques em **Radar - entrar nas milhas** na Mesa (com o programa fechado), entre na conta nas abas que abrirem e feche a janela. O robô passa a usar essa sessão. Ele nunca guarda a sua senha.
+Os sites das companhias e de milhas bloqueiam navegador controlado por robô (a Azul chega a limitar o seu IP), por isso o robô não abre os sites sozinho: você navega e a extensão só lê.
 
-Tudo que o robô vê fica em `~/RadarPassagens/saida` (print, texto e dados de cada página), para conferir e calibrar a leitura.
+### Instalar a extensão (uma vez)
+
+1. No Chrome, abra `chrome://extensions`.
+2. Ligue o **Modo do desenvolvedor** (canto superior direito).
+3. Clique em **Carregar sem compactação** e escolha a pasta `~/RadarPassagens/extensao`.
+
+A extensão só funciona nos sites da GOL, LATAM, Azul e Smiles, só lê páginas que você abriu pelo Radar de Passagens e só envia para o programa no seu próprio computador.
+
+O modo antigo, com o robô abrindo os sites sozinho, ainda existe (`modo_sites: robo` no `config.yaml`), mas os sites costumam bloquear.
 
 **2. Alertas automáticos no Telegram (opcional, já pronto).** O comando `rodar` vigia os preços sozinho e avisa quando aparece promoção. Veja mais abaixo.
 

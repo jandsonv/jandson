@@ -118,6 +118,15 @@ if [ -d "$ATALHO_DIR" ]; then
   chmod +x "$ATALHO" "$ATALHO_DIR/Radar - entrar nas milhas.command"
 fi
 
+if [ ! -f dados/.extensao_mostrada ] && command -v open >/dev/null 2>&1; then
+  azul "Falta 1 passo: a extensão do Chrome (só na primeira vez)"
+  echo "1) No Chrome, abra o endereço chrome://extensions"
+  echo "2) Ligue o 'Modo do desenvolvedor' (canto superior direito)"
+  echo "3) Clique em 'Carregar sem compactação' e escolha a pasta que acabou de abrir: $DESTINO/extensao"
+  open "$DESTINO/extensao" || true
+  mkdir -p dados && touch dados/.extensao_mostrada
+fi
+
 azul "Pronto!"
 echo "Para abrir de novo: dois cliques em 'Radar de Passagens' na Mesa."
 echo "Para fechar o programa: Ctrl+C nesta janela."
